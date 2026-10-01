@@ -1,0 +1,28 @@
+{
+    "backend": "abo",
+    "abo_model": "",
+    "abo_tools": "WebSearch",
+    "model": "claude-opus-5-5",
+    "effort": "medium",
+    "budget_usd_per_month": 3.0,
+    "decision_after_utc_hour": 0,
+    "start_equity": 100.0,
+    "coins": [
+        "BTC",
+        "ETH",
+        "SOL",
+        "XRP",
+        "BNB",
+        "DOGE",
+        "ADA",
+        "TRX",
+        "LINK",
+        "AVAX"
+    ],
+    "kelly_fraction": 0.25,
+    "max_position": 0.35,
+    "max_gross_leverage": 2.0,
+    "daily_loss_stop": 0.05,
+    "taker_fee": 0.0006,
+    "memory_decisions": 7
+}

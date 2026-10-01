@@ -1,0 +1,6 @@
+# Zustand, Protokolle und Schluessel bleiben lokal
+data_dryrun/
+secret.json
+*.bak
+.venv/
+__pycache__/
