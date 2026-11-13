@@ -1,28 +1,18 @@
 {
-    "backend": "abo",
-    "abo_model": "",
-    "abo_tools": "WebSearch",
-    "model": "claude-opus-5-5",
-    "effort": "medium",
-    "budget_usd_per_month": 3.0,
-    "decision_after_utc_hour": 0,
-    "start_equity": 100.0,
-    "coins": [
-        "BTC",
-        "ETH",
-        "SOL",
-        "XRP",
-        "BNB",
-        "DOGE",
-        "ADA",
-        "TRX",
-        "LINK",
-        "AVAX"
-    ],
-    "kelly_fraction": 0.25,
-    "max_position": 0.35,
-    "max_gross_leverage": 2.0,
-    "daily_loss_stop": 0.05,
+    "coins": ["XRP", "BTC", "ETH", "SOL", "BNB", "LTC", "AVAX", "ARB", "AAVE", "ADA", "DOGE"],
+    "leverage": 20,
+    "tp_pct": 0.05,
+    "margin_fraction": 0.15,
+    "min_margin_usdt": 1.0,
     "taker_fee": 0.0006,
-    "memory_decisions": 7
+    "maker_fee": 0.0002,
+    "delay_after_close_s": 20,
+    "strategy": {
+        "rsi_period": 14,
+        "donchian_days": 20,
+        "rsi_day_long": 70,
+        "rsi_day_short": 30,
+        "rsi_15m_long": 30,
+        "rsi_15m_short": 70
+    }
 }

@@ -1,210 +1,203 @@
-<p align="center">
-  <img src="https://img.shields.io/badge/%F0%9F%9A%A7%20BAUSTELLE-nicht%20live-orange?style=for-the-badge" alt="Baustelle – nicht live">
-</p>
-
-> 🚧 **Baustelle:** Dieser Bot ist aktuell **nicht live** und wird weiterentwickelt.
-
-# 🎲 zockerbot – der KI-Spekulant
+# 🎲 zockerbot – Rücksetzer im Ausbruch
 
 <div align="center">
 
-![zockerbot](https://img.shields.io/badge/zockerbot-v1.0-blueviolet?style=for-the-badge)
+![zockerbot](https://img.shields.io/badge/zockerbot-v2.0-blueviolet?style=for-the-badge)
 [![Python](https://img.shields.io/badge/Python-3.10+-green?style=for-the-badge&logo=python)](https://www.python.org/)
-![Claude](https://img.shields.io/badge/KI-Claude%20Opus%205.5-d97757?style=for-the-badge)
-![Modus](https://img.shields.io/badge/Modus-Dry--Run-orange?style=for-the-badge)
-![Kosten](https://img.shields.io/badge/Zusatzkosten-0%20%E2%82%AC-brightgreen?style=for-the-badge)
+![Börse](https://img.shields.io/badge/B%C3%B6rse-Bitget%20Futures-00b8d9?style=for-the-badge)
+![Hebel](https://img.shields.io/badge/Hebel-x20%20isoliert-red?style=for-the-badge)
+![Stop-Loss](https://img.shields.io/badge/Stop--Loss-keiner-black?style=for-the-badge)
 
-**Ein Trading-Bot ohne feste Regeln: Jeden Tag liest eine KI den Markt, sucht selbst nach News, entscheidet frei über long, short oder Abwarten – und muss für jede Idee eine ehrliche Wahrscheinlichkeit nennen. Wie viel gesetzt wird, bestimmt nicht die KI, sondern die Kelly-Formel.**
+**Ein schneller Zocker-Bot mit fester Regel: Er kauft kurze Einbrüche in einem starken Tagesausbruch – und verkauft kurze Spitzen in einem starken Tageseinbruch. Hebel x20, Take-Profit +5 % Kurs, kein Stop-Loss.**
 
-[Übersicht](#-übersicht) • [Ablauf](#-ablauf) • [Eine echte Entscheidung](#-eine-echte-entscheidung) • [Einsatzhöhe](#-einsatzhöhe-kelly-formel) • [Ehrliche Einordnung](#%EF%B8%8F-ehrliche-einordnung) • [Installation](#-installation-minipc) • [Bedienung](#%EF%B8%8F-bedienung)
+[Regel](#-die-regel) • [Wie sie gefunden wurde](#-wie-die-regel-gefunden-wurde) • [Ergebnisse](#-ergebnisse) • [Einsatzhöhe](#-einsatzhöhe) • [Ablauf](#-ablauf-im-live-betrieb) • [Installation](#-installation-minipc--vps) • [Bedienung](#%EF%B8%8F-bedienung) • [Risiken](#%EF%B8%8F-risiken)
 
 </div>
 
 ---
 
-## 📊 Übersicht
+## 🧭 Kurzfassung
 
-Der zockerbot ist ein Experiment: **Kann eine KI, die wie ein disziplinierter Profi-Spekulant denkt, einfaches BTC-Halten schlagen?** Er handelt (simuliert) Perpetual-Futures auf den zehn größten Coins und startet mit 100 USDT im Dry-Run – es werden **keine echten Orders** gesendet.
-
-### 🧭 Kurzfassung
-- **Die KI entscheidet frei** – long, short oder gar nichts. Keine festen Indikator-Regeln.
-- **Einmal pro Tag** nach Tagesschluss (00:00 UTC), auf Basis abgeschlossener Tageskerzen.
-- **Sie recherchiert selbst**: Krypto-News der letzten 24 Stunden und Makro-Termine (Fed, Inflation, Arbeitsmarkt).
-- **Sie lernt aus ihrer Vergangenheit**: Die letzten 7 Entscheidungen samt Ergebnis gehören zu jedem Auftrag.
-- **Die Einsatzhöhe kommt aus der Mathematik**, nicht aus dem Bauchgefühl: ¼ Kelly mit harten Obergrenzen.
-- **Über das Claude-Abo**: keine API-Kosten, die KI hat nur Websuche – sie kann auf dem Rechner nichts ausführen.
+- **Ziel:** aus einem kleinen Konto (z. B. 30 USDT) möglichst schnell etwa **1.000 €** machen.
+- **Regel:** Stoch-RSI-, MACD-, EMA-, Bollinger-, Donchian-, Supertrend- und Volumen-Kombinationen wurden durchsucht – **übrig blieb genau eine Regel**, die in drei unabhängigen Prüfungen über der Gewinnschwelle lag.
+- **Coins:** XRP, BTC, ETH, SOL, BNB, LTC, AVAX, ARB, AAVE, ADA, DOGE (USDT-Perpetuals auf Bitget).
+- **Takt:** alle 15 Minuten, 20 Sekunden nach Kerzenschluss; nur abgeschlossene Kerzen.
+- **Einsatz:** 15 % des Kontos als Margin pro Trade, x20, isoliert. Mehrere Coins können gleichzeitig offen sein.
+- **Ausstieg:** nur Take-Profit bei +5 % Kurs (≈ +98 % auf die Margin). Ohne Stop-Loss – geht der Kurs ca. 4,5 % gegen die Position, wird die Margin dieses Trades liquidiert.
+- **Live = Backtest:** `live.py` und `backtest.py` rufen dieselbe Funktion `strategy.signals()` auf.
 
 ---
 
-## 🔁 Ablauf
+## 📐 Die Regel
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/flow_dark.png">
-  <img alt="Ablauf: Marktbericht und Websuche gehen an Claude, die Entscheidung wird per Kelly-Formel dimensioniert und im simulierten Konto abgerechnet; die Ergebnisse fließen als Gedächtnis zurück." src="docs/flow_light.png">
-</picture>
-
-1. **Marktbericht** (`data.py`): Für jeden der zehn Coins Renditen über 1/7/30/90 Tage, Abstand zu den 20-/50-/100-Tage-Durchschnitten, RSI, Schwankung, Tagesspanne und Funding. Dazu das BTC-Regime, das Wachstum der Stablecoin-Menge und neue Binance-Ankündigungen. Nur **abgeschlossene** Kerzen – die laufende wird verworfen.
-2. **Websuche**: Höchstens 4 Suchen nach News und anstehenden Terminen. Riskante Termine kurz vor dem nächsten Tag sind ein Grund für kleinere Positionen.
-3. **Claude entscheidet** (`brain.py`): je Idee Coin, Richtung, **Gewinnwahrscheinlichkeit**, Chance/Risiko, Stop, Ziel und Begründung – als streng geprüftes JSON.
-4. **Kelly-Formel** (`logic.py`): rechnet daraus die Positionsgröße und wendet die Leitplanken an.
-5. **Konto** (`live.py`): Positionen werden zum Tagesschlusskurs gesetzt, am nächsten Tag über Hoch/Tief auf Stop und Ziel geprüft (Stop zuerst – konservativ), Funding und Gebühren werden abgezogen.
-
----
-
-## 🔍 Eine echte Entscheidung
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/decision_dark.png">
-  <img alt="BTC-Kurs der letzten 120 Tage mit 50-Tage-Schnitt sowie Einstieg, Stop und Ziel der ersten KI-Entscheidung." src="docs/decision_light.png">
-</picture>
-
-Die erste Entscheidung (30.09.2026): **BTC long und ETH long, je 35 % des Kontos.** Aus der Begründung der KI:
-
-> *„Das Umfeld spricht für Trendfolge: BTC liegt deutlich über seinen Durchschnitten, die Stablecoin-Menge wächst und stützt den Trend, der RSI liegt bei rund 60 – nicht überhitzt. Die Altcoins mit dem stärksten Momentum (AVAX, LINK, ADA) liegen schon 12–15 % über ihrem 20-Tage-Schnitt und sind sehr volatil – dort jagt man dem Kurs eher hinterher. Deshalb setze ich auf die liquiden Trendführer BTC und ETH, mit weiten Stops passend zum Tagesrauschen.“*
-
-| | BTC | ETH |
+| | Long | Short |
 |---|---|---|
-| Gewinnwahrscheinlichkeit (Schätzung der KI) | 46 % | 44 % |
-| Chance/Risiko | 2 : 1 | 2 : 1 |
-| Stop / Ziel | −6 % / +12 % | −7,5 % / +15 % |
+| **Tageskerze** (UTC, abgeschlossen) | RSI(14) > 70 **und** Schluss über dem Hoch der 20 Tage davor | RSI(14) < 30 **und** Schluss unter dem Tief der 20 Tage davor |
+| **15m-Kerze** (abgeschlossen) | RSI(14) < 30 | RSI(14) > 70 |
+| **Einstieg** | Market zur Eröffnung der nächsten 15m-Kerze | ebenso |
+| **Take-Profit** | Einstieg + 5 % | Einstieg − 5 % |
+| **Stop-Loss** | keiner (Liquidation bei ca. −4,5 %) | keiner (Liquidation bei ca. +4,5 %) |
 
-Mit Websuche fand die KI im Testlauf selbst den ETF-Abfluss vom Vortag und den anstehenden US-Arbeitsmarktbericht – und setzte deshalb **engere Stops**. Jede Entscheidung wird vollständig in `data_dryrun/decisions.jsonl` protokolliert.
+Pro Coin ist immer höchstens ein Trade offen.
+
+**Warum das funktionieren kann:** Bricht ein Coin auf Tagesbasis kräftig aus (neues 20-Tage-Hoch, Tages-RSI über 70), wollen viele Marktteilnehmer noch hinein. Ein kurzer Einbruch auf 15m (15m-RSI unter 30) wird in dieser Lage oft schnell aufgekauft – der Kurs läuft häufiger erst 5 % in Trendrichtung, bevor er 4,5 % dagegen läuft. Spiegelbildlich im Crash.
 
 ---
 
-## 📐 Einsatzhöhe (Kelly-Formel)
+## 🔬 Wie die Regel gefunden wurde
+
+1. **Vorberechnet** wurde für jeden 15m-Zeitpunkt auf 8 Coins (2021–2026), ob Long bzw. Short zuerst den Take-Profit oder die Liquidation erreicht – auf **1-Minuten-Kerzen** geprüft, mit Gebühren und Funding. Getestet: x20 mit TP +2,5 / +5 / +10 % und x10 mit TP +5 / +10 %.
+2. **Durchsucht** wurden **39.773 Kombinationen** aus bis zu drei Bedingungen (RSI, Stoch RSI, MACD, EMA-Trend, Bollinger, Donchian, Supertrend, Volumen auf 15m, 1h, 4h, 1d) – jeweils Long, Short und beide Richtungen.
+3. **Ausgewählt** wurde nur auf **2021–2023**, geprüft auf **2024–2026**. Ergebnis: Die besten 20 aus 2021–2023 verloren danach **ausnahmslos** (das frühere Erfolgsrezept „15m unter dem Bollinger-Band kaufen“ kippte).
+4. **Gegenprobe auf drei ungesehenen Coins** (AAVE, ADA, DOGE): Von den Kandidaten, die in beiden Zeiträumen hielten, bestand nur diese Regel überall.
+
+| Prüfung | Trefferquote | Ergebnis je Trade (Anteil der Margin) |
+|---|---|---|
+| 2021–2023 (Auswahl, 8 Coins) | 62,6 % | +0,24 |
+| 2024–2026 (Gegenprobe, 8 Coins) | 61,9 % | +0,23 |
+| AAVE / ADA / DOGE (nie gesehen) | – | +0,28 / +0,08 / +0,23 |
+
+Gewinnschwelle bei x20 und TP +5 %: **50,4 %** Treffer.
+
+Alle Skripte und Ergebnisse liegen in [`forschung/`](forschung/).
+
+---
+
+## 📊 Ergebnisse
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/kelly_dark.png">
-  <img alt="Positionsgröße in Abhängigkeit von der Gewinnwahrscheinlichkeit für Stops von 4, 6 und 10 Prozent bei Chance/Risiko 2:1, gedeckelt bei 35 Prozent." src="docs/kelly_light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/jahre_dark.png">
+  <img alt="Trefferquote je Jahr von 2021 bis 2026 mit der Gewinnschwelle von 50,4 Prozent; 2026 liegt knapp darunter." src="docs/jahre_light.png">
 </picture>
 
-Profi-Spieler setzen nicht nach Gefühl, sondern nach der **Kelly-Formel**: `f* = p − (1 − p) / b` (p = Gewinnwahrscheinlichkeit, b = Chance/Risiko). Der zockerbot setzt nur **ein Viertel** davon und rechnet es auf den Stop-Abstand um:
+| Jahr | 2021 | 2022 | 2023 | 2024 | 2025 | 2026 |
+|---|---|---|---|---|---|---|
+| Trades (11 Coins) | 95 | 78 | 96 | 108 | 47 | 45 |
+| Trefferquote | 63 % | 62 % | 58 % | 70 % | 57 % | **49 %** |
 
-`Positionsgröße = ¼ · f* / Stop-Abstand`
-
-- **Kein positiver Erwartungswert → kein Einsatz.** Bei 2 : 1 lohnt sich ein Trade erst ab 33,3 % Trefferwahrscheinlichkeit.
-- **Weiter Stop → kleinere Position**, damit das Risiko je Trade gleich bleibt.
-- **Überschätzt die KI ihre Chancen, kostet sie das direkt Geld** – deshalb soll sie kalibriert schätzen statt mutig.
-
-### 🛡️ Leitplanken
-
-| Regel | Wert |
-|---|---|
-| Anteil der Kelly-Quote | 25 % |
-| Höchste Position je Coin | 35 % des Kontos |
-| Gesamt-Exposure | höchstens 2× |
-| Tagesverlust-Stopp | −5 % → alles schließen, 1 Tag Pause |
-| Stop-Abstand | 0,5 % bis 50 %, sonst wird die Idee verworfen |
-| Positionen, die die KI nicht erneut nennt | werden geschlossen |
-
----
-
-## ⚠️ Ehrliche Einordnung
+Insgesamt **469 Trades, 61,6 % Treffer**, alle 11 Coins im Plus. Eine Position läuft im Mittel etwa 11 Stunden.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/arena_dark.png">
-  <img alt="Ergebnisse der Alpha Arena: Qwen plus 22,3 Prozent, DeepSeek plus 4,9 Prozent, Claude Sonnet 4.5 minus 42,0, Gemini 2.5 Pro minus 45,6, Grok 4 minus 57,9, GPT-5 minus 58,7 Prozent." src="docs/arena_light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/equity_dark.png">
+  <img alt="Kontoverlauf ab 30 USDT auf logarithmischer Skala: starkes Wachstum bis Juli 2025, danach ein Einbruch von 96 Prozent bis Februar 2026; mit 25 Prozent Margin geht das Konto auf null." src="docs/equity_light.png">
 </picture>
 
-- **KIs sind keine Gelddruckmaschinen.** Im öffentlichen Wettbewerb „Alpha Arena“ handelten sechs führende Modelle zwei Wochen lang mit je 10.000 $ echtem Geld – vier verloren 42–59 %. Der Bestplatzierte hatte nach zwei Wochen +22 %, zu kurz, um Können von Glück zu unterscheiden.
-- **Der zockerbot hat daraus gelernt:** Die Einsatzhöhe liegt nicht bei der KI, es gibt harte Obergrenzen und einen Tagesverlust-Stopp, und die KI kennt die Ergebnisse umfangreicher eigener Tests (siehe unten).
-- **Was in Tests 2023–2026 funktioniert hat und was nicht** – das steht so auch im Auftrag an die KI:
-  - ✅ Trendfolge auf Tagesbasis, nur wenn BTC über seinem 100-Tage-Schnitt liegt; kleinere Positionen in unruhigen Phasen; Stablecoin-Zuflüsse als Rückenwind.
-  - ❌ Scalping, häufiges Hin und Her, Shorts gegen gehypte Altcoins, Hebel auf Altcoins im Bärenmarkt, Tageszeit- und Wochentagsmuster.
-- **Messlatte ist BTC halten.** In den meisten getesteten Zeiträumen war das schwer zu schlagen. Ob die KI es schafft, zeigt nur der Dry-Run über Monate.
-- **Eine KI-Entscheidung lässt sich nicht fair zurücktesten**: Das Modell kennt vergangene Kurse aus dem Training. Zählen tun nur Entscheidungen ab dem Start.
-- **Entscheidungen sind nicht deterministisch** – dieselben Daten können an zwei Tagen zu unterschiedlichen Ideen führen.
+**Kontoverlauf mit 15 % Margin je Trade, Start 30 USDT im März 2021** (ein Konto für alle Coins):
+
+| Jahresende | 2021 | 2022 | 2023 | 2024 | 2025 | Nov. 2026 |
+|---|---|---|---|---|---|---|
+| Konto (USDT) | 361 | 817 | 1.500 | 142.481 | 139.575 | 34.102 |
+
+Höchststand am 22.07.2025, danach **−96 % bis Februar 2026**. Seit Mitte 2025 läuft die Regel deutlich schwächer (2026: 49 % Treffer bei 45 Trades).
+
+**Weg zu 1.000 € (≈ 1.100 USDT) ab 30 USDT** – 52 Starts, je einer an jedem Monatsanfang von März 2021 bis Juni 2025:
+
+| Margin je Trade | 1.100 erreicht | pleite | Dauer im Mittel | schnellster Start |
+|---|---|---|---|---|
+| 10 % | 36 von 52 | 0 | 816 Tage | 281 Tage |
+| **15 %** | **39 von 52** | **0** | **585 Tage** | **95 Tage** |
+| 20 % | 40 von 52 | 2 | 638 Tage | 89 Tage |
+| 25 % | 10 von 52 | 29 | 328 Tage | 84 Tage |
+| 40–50 % | 2 von 52 | 50 | 48 Tage | 34 Tage |
+| 100 % (all-in) | 0 von 52 | 52 | – | – |
 
 ---
 
-## 📋 Systemanforderungen
+## 💰 Einsatzhöhe
 
-- **OS**: Linux (z. B. Ubuntu auf dem MiniPC); Windows funktioniert ebenfalls
-- **Python**: 3.10 oder höher
-- **Claude-Abo** mit Claude Code (Pro oder Max) – *oder* ein Anthropic-API-Schlüssel
-- **Netzwerk**: öffentliche Binance-API, DefiLlama, Websuche über Claude
+`margin_fraction` in `settings.json` (Standard **0,15**) bestimmt, wie viel des Kontostands ein Trade als Margin bekommt. Mit x20 entspricht das 3 × dem Konto an Positionsgröße pro Trade.
+
+- **Mehr als 15–20 % macht es nicht schneller, sondern führt in die Pleite:** Starke Tagesausbrüche kommen oft auf vielen Coins gleichzeitig. Dann sind mehrere Positionen zugleich offen und werden auch gemeinsam liquidiert.
+- Ein Trade bekommt höchstens die frei verfügbare Margin; ist nichts mehr frei, wird das Signal ausgelassen.
 
 ---
 
-## 💻 Installation (MiniPC)
+## 🔁 Ablauf im Live-Betrieb
 
-### 1. Repository klonen und installieren
+Alle 15 Minuten, 20 Sekunden nach Kerzenschluss, für jeden Coin:
+
+1. **Position offen?** Dann prüfen, ob der Take-Profit auf Bitget steht – fehlt er, wird er neu gesetzt. Sonst nichts tun.
+2. **Position seit dem letzten Lauf verschwunden?** Ergebnis feststellen (TP erreicht oder Liquidation), übrig gebliebene Orders stornieren, in `data/trades.csv` eintragen, Telegram-Nachricht.
+3. **Keine Position:** Kerzen holen (400 × 15m, 150 × 1d), laufende Kerzen verwerfen, `strategy.signals()` auf der gerade geschlossenen 15m-Kerze auswerten.
+4. **Bei Signal:** isolierte Margin und Hebel setzen, Market-Order, dann Take-Profit als reduce-only Trigger-Order zum tatsächlichen Füllkurs ± 5 %. Telegram-Nachricht mit Einstieg, TP und Liquidationsabstand.
+
+Die Order-Funktionen stammen aus dem live erprobten mbot (Hedge-Modus, `hedged=True`, reduce-only TP).
+
+---
+
+## 🚀 Installation (MiniPC / VPS)
+
 ```bash
 git clone https://github.com/Youra82/zockerbot.git ~/zockerbot
 cd ~/zockerbot
 ./install.sh
 ```
 
-### 2. Claude Code einrichten (einmalig)
-```bash
-curl -fsSL https://claude.ai/install.sh | bash
-claude        # mit dem Claude-Abo anmelden (Link im Browser/Handy bestätigen), dann /exit
-```
+1. **Bitget vorbereiten:** am besten ein eigenes Unterkonto mit USDT im Futures-Konto. Positionsmodus **„beidseitig“ (Hedge)** einstellen – wie beim mbot.
+2. **`secret.json` ausfüllen** (wird von `install.sh` aus der Vorlage angelegt, ist nicht versioniert):
+   ```json
+   {
+       "zockerbot": [{"name": "Bitget Unterkonto zockerbot", "apiKey": "...", "secret": "...", "password": "..."}],
+       "telegram": {"bot_token": "...", "chat_id": "..."}
+   }
+   ```
+3. **Prüfen ohne Orders:** `.venv/bin/python3 live.py --check` – zeigt Kontostand, offene Positionen und das aktuelle Signal je Coin.
+4. **Wächter-Cronjob eintragen** (`crontab -e`), startet den Bot und nach einem Neustart wieder:
+   ```
+   */5 * * * * /home/<user>/zockerbot/start.sh
+   ```
 
-### 3. Kostenlos testen
-```bash
-.venv/bin/python3 live.py --mock      # kompletter Durchlauf mit Test-Entscheidung, ohne KI
-.venv/bin/python3 live.py --prompt    # zeigt den heutigen Auftrag an die KI
-```
-
-### 4. Dauerbetrieb per Cron
-```bash
-crontab -e
-*/5 * * * * /home/matola/zockerbot/start.sh
-```
-`start.sh` ist ein Wächter: Läuft der Bot nicht (z. B. nach einem Neustart), startet er ihn. Verpasste Tage werden beim nächsten Start abgerechnet – für vergangene Tage trifft die KI keine nachträglichen Entscheidungen.
+Der Bot braucht wenig Speicher (unter 200 MB) und passt auf den MiniPC.
 
 ---
 
-## 🕹️ Bedienung
+## ⚙️ Bedienung
 
-| Aufgabe | Befehl |
+| Befehl | Was er tut |
 |---|---|
-| Live-Protokoll | `tail -f data_dryrun/zockerbot.log` |
-| Alle Entscheidungen mit Begründung | `data_dryrun/decisions.jsonl` |
-| Kontostand je Tag | `data_dryrun/daily.jsonl` |
-| Geschlossene Trades | `data_dryrun/trades.jsonl` |
-| Update | `./update.sh` (Einstellungen und Kontostand bleiben erhalten) |
-| Stoppen | `./stop.sh` (und Cron-Zeile entfernen, sonst startet der Wächter neu) |
+| `.venv/bin/python3 live.py --check` | Kontostand, Positionen, aktuelles Signal – **keine Orders** |
+| `./start.sh` / `./stop.sh` | Bot starten / stoppen (offene Positionen und TP-Orders bleiben auf Bitget) |
+| `tail -f logs/zockerbot.log` | laufendes Protokoll |
+| `cat data/trades.csv` | alle abgeschlossenen Trades |
+| `.venv/bin/python3 backtest.py --days 365` | Backtest mit Bitget-Kerzen und derselben Signalfunktion (Kerzen-Cache in `data/cache/`) |
+| `./update.sh` | neue Version holen; `settings.json`, `secret.json`, `data/` und `logs/` bleiben erhalten |
 
----
-
-## ⚙️ Konfiguration (`settings.json`)
+### Einstellungen (`settings.json`)
 
 | Schlüssel | Standard | Bedeutung |
 |---|---|---|
-| `backend` | `abo` | `abo` = Claude Code über das Abo, `api` = Anthropic-API |
-| `abo_tools` | `WebSearch` | Werkzeuge der KI; leer = keine Websuche |
-| `abo_model` | *(leer)* | Modell im Abo; leer = Standard des Accounts |
-| `model` / `budget_usd_per_month` | `claude-opus-5-5` / `3.0` | nur für `api`: Modell und hartes Monatsbudget |
-| `effort` | `medium` | Denktiefe der KI |
-| `kelly_fraction` | `0.25` | Anteil der vollen Kelly-Quote |
-| `max_position` / `max_gross_leverage` | `0.35` / `2.0` | Obergrenzen je Coin / gesamt |
-| `daily_loss_stop` | `0.05` | Tagesverlust, ab dem alles geschlossen wird |
-| `memory_decisions` | `7` | wie viele frühere Entscheidungen die KI sieht |
-
-Für `backend: "api"` den Schlüssel in `secret.json` ablegen: `{"anthropic_api_key": "..."}` (nicht versioniert).
+| `coins` | 11 Coins | gehandelte USDT-Perpetuals |
+| `leverage` | 20 | Hebel (isolierte Margin) |
+| `tp_pct` | 0.05 | Take-Profit in Kursprozent |
+| `margin_fraction` | 0.15 | Anteil des Kontos als Margin je Trade |
+| `min_margin_usdt` | 1.0 | darunter wird kein Trade eröffnet |
+| `delay_after_close_s` | 20 | Wartezeit nach 15m-Kerzenschluss |
+| `strategy` | siehe Regel | RSI-Länge, Donchian-Tage, RSI-Schwellen |
 
 ---
 
-## 📁 Projektstruktur
+## 📁 Dateien
 
 ```
 zockerbot/
-├── live.py          # Ablauf: Abrechnung, Nachholen, Entscheidung, Protokoll
-├── brain.py         # KI-Auftrag, Aufruf (Abo oder API), Antwortprüfung, Kosten
-├── data.py          # Marktbericht aus öffentlichen Daten
-├── logic.py         # Kelly-Größe, Tagesabrechnung, Umschichten
-├── settings.json    # Einstellungen
-├── install.sh / start.sh / stop.sh / update.sh
-└── docs/            # Grafiken + generate_illustrations.py
+├── strategy.py          Signalfunktion (Live und Backtest identisch)
+├── live.py              15-Minuten-Takt, Orders, Telegram, Zustand
+├── exchange.py          Bitget-Anbindung (aus dem mbot)
+├── backtest.py          Backtest mit Bitget-Kerzen
+├── settings.json        Einstellungen
+├── secret.json.template Vorlage für Schlüssel
+├── install.sh  start.sh  stop.sh  update.sh
+├── docs/                Grafiken + make_charts.py
+└── forschung/           Suche, Gegenproben, Ergebnisse (siehe unten)
 ```
+
+**`forschung/`:** `labels.py` (TP-vor-Liquidation auf 1m), `features.py` (62 Indikator-Bedingungen), `search.py` (39.773 Kombinationen), `analyse.py`, `holdout.py` (Gegenprobe AAVE/ADA/DOGE), `winner.py` (Kontoverlauf), dazu `winner_trades.csv` (alle 469 Trades), `holdout_result.csv` und `search_top200.csv`. Die Skripte werden im Ordner `forschung/` gestartet und erwarten die Kerzen als Parquet-Dateien unter `forschung/kerzen/ohlcv_1m/<COIN>USDT.parquet` und `forschung/kerzen/ohlcv_15m/<COIN>USDT.parquet` (Spalten `open_time, open, high, low, close, volume`); sie sind nicht versioniert.
 
 ---
 
-<div align="center">
+## ⚠️ Risiken
 
-**⚠️ Keine Anlageberatung.** Der zockerbot ist ein Experiment im Dry-Run. Krypto-Futures mit Hebel können zum Totalverlust führen.
-
-</div>
+- **Kein Stop-Loss, Hebel x20:** Jeder Fehltreffer kostet die gesamte Margin dieses Trades. Bei 15 % Margin sind das 15 % des Kontos – bei mehreren gleichzeitigen Fehltreffern entsprechend mehr.
+- **Starke Schwankung:** Im Backtest fiel das Konto von Juli 2025 bis Februar 2026 um 96 %. Seit Mitte 2025 ist die Trefferquote gesunken, 2026 lag sie knapp unter der Gewinnschwelle.
+- **Backtest ≠ Zukunft:** Die Regel wurde aus vielen Kombinationen ausgewählt und dreifach gegengeprüft; ein Vorteil von wenigen Prozentpunkten Trefferquote kann trotzdem verschwinden.
+- **Börsen-Details:** Die tatsächliche Liquidation hängt von Bitgets Wartungsmargin ab; Funding und Slippage können vom Backtest abweichen.

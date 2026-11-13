@@ -1,6 +1,6 @@
 #!/bin/bash
-# Sicheres Update: data_dryrun/ (Kontostand, Gedaechtnis) und secret.json sind nicht versioniert
-# und werden von 'git reset --hard' nicht angefasst. settings.json wird gesichert und zurueckgespielt.
+# Sicheres Update: data/ (Zustand, Trades), logs/ und secret.json sind nicht versioniert.
+# settings.json wird gesichert und nach dem Update zurueckgespielt (eigene Einstellungen bleiben).
 set -e
 cd "$(dirname "$0")"
 echo "--- Sicheres Update (zockerbot) ---"

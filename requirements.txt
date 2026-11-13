@@ -1,5 +1,4 @@
-ccxt>=4.5
+ccxt>=4.5.35
 pandas>=2.0
 numpy>=1.26
 requests>=2.31
-anthropic>=1.0
