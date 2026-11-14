@@ -95,6 +95,7 @@ def main():
     ap.add_argument("--ziel", type=float, default=None, help="Modus serie: ziel_usdt überschreiben")
     ap.add_argument("--im-spiel", type=float, default=None, help="Modus serie: im_spiel_nach_ziel überschreiben (0..1)")
     ap.add_argument("--polster", type=float, default=None, help="Modus serie: polster_usdt überschreiben (0 = aus)")
+    ap.add_argument("--neustart-anteil", type=float, default=None, help="Modus serie: neustart_anteil überschreiben (0 = fest 30 USDT)")
     ap.add_argument("--tresor-start", type=float, default=0.0, help="Modus serie: eigene Reserve im Tresor zum Start (wie live.py --tresor)")
     a = ap.parse_args()
     if a.von:
@@ -115,6 +116,8 @@ def main():
         cfg["im_spiel_nach_ziel"] = a.im_spiel
     if a.polster is not None:
         cfg["polster_usdt"] = a.polster
+    if a.neustart_anteil is not None:
+        cfg["neustart_anteil"] = a.neustart_anteil
     modus = a.modus or cfg["modus"]
     f = a.fraction if a.fraction is not None else cfg["margin_fraction"]
     lev, tp, kmax = cfg["leverage"], cfg["tp_pct"], cfg["max_positionen"]
@@ -179,18 +182,19 @@ def main():
                 tresor += pol_anteil * gewinn
                 gewinn *= 1 - pol_anteil
             spiel += gewinn
+            neu_dyn = max(neu, float(cfg.get("neustart_anteil", 0.0)) * (spiel + tresor))   # wie live: dynamischer Neustart
             if spiel >= cfg["ziel_usdt"]:
-                bleibt = max(neu, cfg.get("im_spiel_nach_ziel", 0.2) * spiel)
+                bleibt = max(neu_dyn, cfg.get("im_spiel_nach_ziel", 0.2) * spiel)
                 tresor += spiel - bleibt; spiel = bleibt; hits += 1
-            elif spiel < neu:                         # wie live: unter neustart_usdt aus dem Tresor auffüllen
-                need = neu - spiel
+            elif spiel < neu_dyn - 0.01:              # wie live: unter Neustart-Betrag aus dem Tresor auffüllen
+                need = neu_dyn - spiel
                 if tresor >= need:
                     tresor -= need
                 else:
                     ext += need - tresor; tresor = 0.0
-                spiel = neu
+                spiel = neu_dyn
         print(f"Serie ab {a.start:.0f} USDT + Reserve {a.tresor_start:.0f}, Ziel {cfg['ziel_usdt']}, danach "
-              f"{cfg.get('im_spiel_nach_ziel', 0.2) * 100:.0f} % im Spiel, Polster {pol:.0f}: "
+              f"{cfg.get('im_spiel_nach_ziel', 0.2) * 100:.0f} % im Spiel, Polster {pol:.0f}, Neustart {cfg.get('neustart_anteil', 0) * 100:.0f} %: "
               f"{hits}x erreicht | eingezahlt {ext:.0f} | Tresor {tresor:.0f} | Spielgeld {spiel:.0f} | netto {tresor + spiel - ext:+.0f} USDT")
     else:
         k, peak, mdd, op = a.start, a.start, 0.0, []

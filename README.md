@@ -7,7 +7,7 @@
 ![Börse](https://img.shields.io/badge/B%C3%B6rse-Bitget%20Futures-00b8d9?style=for-the-badge)
 ![Hebel](https://img.shields.io/badge/Hebel-x10%20isoliert-red?style=for-the-badge)
 ![Coins](https://img.shields.io/badge/Coins-42-orange?style=for-the-badge)
-![Modus](https://img.shields.io/badge/Modus-B%20%2B%20Polster-b07a1a?style=for-the-badge)
+![Modus](https://img.shields.io/badge/Modus-B%20%2B%20Polster%20%2B%20Neustart%2015%25-b07a1a?style=for-the-badge)
 ![Stop-Loss](https://img.shields.io/badge/Stop--Loss-keiner-black?style=for-the-badge)
 
 **Ein Serien-Zocker mit Sicherheitskissen: Er wartet, bis ein Coin auf Tagesbasis stark ausbricht, kauft den nächsten kurzen Einbruch auf 15 Minuten und nimmt +7,5 % Kurs mit – mit x10 sind das +74 % auf den Einsatz. Gewinne laufen in den nächsten Trade, ein Teil wandert sofort in einen Tresor, aus dem der Bot nach einer Liquidation selbst neu startet.**
@@ -23,8 +23,8 @@
 - **42 Coins** auf Bitget (USDT-Perpetuals), **Long und Short**, **immer nur eine Position gleichzeitig**.
 - **Einstieg** beim 15m-Rücksetzer in einem starken Tagesausbruch; **Ausstieg** nur per Take-Profit bei **+7,5 % Kurs**, Hebel **x10 isoliert**, **kein Stop-Loss** (Liquidation bei ca. 9,5 % Gegenbewegung).
 - **Pro Treffer +74 %** auf die Margin, Gewinnschwelle **57,4 %** Treffer. Backtest 2021–2026: **226 Trades, 66,4 % Treffer**, längste Serie **13 Treffer in Folge**.
-- **Serienmodus „B + Polster“ (Standard):** 97 % des Spielgelds je Trade; die Hälfte jedes Gewinns baut zuerst ein **Polster von 150 USDT** im Tresor auf; ab **400 USDT** Spielgeld wandert die Hälfte in den Tresor; nach einer Liquidation **füllt der Bot aus dem Tresor auf 30 USDT auf**.
-- **Backtest 2021–2026, Start 30 USDT:** 19× Ziel erreicht, **123 USDT selbst eingezahlt, 3.165 USDT im Tresor, netto +3.071 USDT** – in jedem geprüften Zeitraum im Plus, auch mit Bitget-Kursen seit Mai 2026.
+- **Serienmodus „B + Polster“ (Standard):** 97 % des Spielgelds je Trade; die Hälfte jedes Gewinns baut zuerst ein **Polster von 150 USDT** im Tresor auf; ab **400 USDT** Spielgeld wandert die Hälfte in den Tresor; nach einer Liquidation **füllt der Bot aus dem Tresor auf** – auf 30 USDT, mit großem Tresor auf **15 % des Kontos** (dynamischer Neustart).
+- **Backtest 2021–2026, Start 30 USDT:** **123 USDT selbst eingezahlt, Konto am Ende 20.200 USDT, netto +20.077 USDT** (ohne dynamischen Neustart +3.071) – in jedem geprüften Zeitraum im Plus, auch mit Bitget-Kursen seit Mai 2026; dafür Rückgänge bis 55 % bei großem Konto.
 - **Empfohlener Start:** 200 USDT einzahlen, `live.py --tresor 170` → 30 USDT spielen, 170 USDT Reserve.
 - **Live = Backtest:** `live.py` und `backtest.py` nutzen dieselben Funktionen `strategy.day_flags()` und `strategy.signals()` und dieselbe Tresor-/Polster-Logik; Signale auf 42 Coins identisch mit der Forschung (2.675 von 2.675).
 
@@ -51,29 +51,32 @@ So, wie man ein kleines Konto hochzockt – mit fester Regel und Sicherheitskiss
 1. **Start:** 200 USDT ins Futures-Konto und **vor dem ersten Start** einmal `.venv/bin/python3 live.py --tresor 170` – dann spielen 30 USDT, 170 USDT liegen als eigene Reserve im Tresor. (Mit nur 30 USDT ohne Reserve geht es auch.)
 2. **Jeder Trade** setzt 97 % des Spielgelds ein (Spielgeld = Konto minus Tresor). **Der Tresor wird nie eingesetzt.**
 3. **Polster:** Bei jedem Treffer geht die Hälfte des Gewinns sofort in den Tresor, bis dort 150 USDT plus deine eigene Reserve liegen. So bezahlt der Bot Neustarts schon nach wenigen Treffern selbst.
-4. **Ziel:** Erreicht das Spielgeld 400 USDT, bleibt die Hälfte (mindestens 30 USDT) im Spiel, die andere Hälfte wandert in den Tresor – ohne Pause geht es weiter. Mit 50 % im Spiel reichen danach 2 Treffer bis zum nächsten Ziel.
-5. **Liquidation:** Der Bot füllt das Spielgeld aus dem Tresor wieder auf 30 USDT auf und startet die nächste Serie. Einzahlen musst du nur, wenn der Tresor leer ist.
-6. **Abheben jederzeit** (ohne offene Position): Der Bot erkennt den kleineren Kontostand und verkleinert Tresor und Reserve, 30 USDT Spielgeld bleiben stehen.
+4. **Ziel:** Erreicht das Spielgeld 400 USDT, bleibt die Hälfte (mindestens der Neustart-Betrag) im Spiel, der Rest wandert in den Tresor – ohne Pause geht es weiter. Mit 50 % im Spiel reichen danach 2 Treffer bis zum nächsten Ziel.
+5. **Liquidation:** Der Bot füllt das Spielgeld aus dem Tresor wieder auf den **Neustart-Betrag** auf und startet die nächste Serie. Einzahlen musst du nur, wenn der Tresor leer ist.
+6. **Dynamischer Neustart:** Der Neustart-Betrag ist das Größere von 30 USDT und **15 % des ganzen Kontos**. Bei kleinem Konto bleibt es bei 30 USDT; ab rund 200 USDT Konto wächst er mit. Mit großem Tresor setzt der Bot so je Trade etwa 15 % des Kontos ein und sichert jeden Gewinn sofort.
+7. **Abheben jederzeit** (ohne offene Position): Der Bot erkennt den kleineren Kontostand und verkleinert Tresor und Reserve, 30 USDT Spielgeld bleiben stehen.
 
 Telegram meldet jeden Einstieg, jeden Treffer mit Serienstand und Polster-Anteil („TREFFER 3 in Folge … 10,80 USDT ins Polster“), jede Liquidation, jedes erreichte Ziel, jedes Auffüllen aus dem Tresor und erkannte Abhebungen.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/serie_dark.png">
-  <img alt="B + Polster von 2021 bis 2026: der Tresor wächst in Stufen auf rund 3.200 USDT, das Spielgeld schwankt zwischen 30 und 400 USDT, die eigenen Einzahlungen bleiben bei 123 USDT." src="docs/serie_light.png">
+  <img alt="B + Polster mit dynamischem Neustart von 2021 bis 2026, logarithmisch: der Tresor wächst auf rund 17.000 USDT, das Spielgeld auf einige tausend USDT, die eigenen Einzahlungen bleiben bei 123 USDT." src="docs/serie_light.png">
 </picture>
 
 ### Warum B + Polster
 
-Drei Einstellungen auf denselben Trades (Start 30 USDT; netto = Tresor + Spielgeld − eigene Einzahlungen; je Zeitraum frisch gestartet):
+Vier Einstellungen auf denselben Trades (Start 30 USDT; netto = Tresor + Spielgeld − eigene Einzahlungen; je Zeitraum frisch gestartet):
 
 | Einstellung | 2021–2023 | 2024 – 04/2026 | 05–11/2026 (Bitget) | 2021–2026 | selbst eingezahlt |
 |---|---|---|---|---|---|
 | A: Ziel 1.000, 20 % im Spiel | +4.256 | +1.444 | −112 | **+5.552** | 226 USDT |
 | B: Ziel 400, 50 % im Spiel | +2.682 | +645 | −112 | +3.398 | 226 USDT |
-| **B + Polster 150 (Standard)** | **+2.356** | **+480** | **+20** | **+3.071** | **123 USDT** |
+| B + Polster 150, Neustart fest 30 | +2.356 | +480 | +20 | +3.071 | 123 USDT |
+| **B + Polster 150, Neustart 15 % (Standard)** | **+5.248** | **+525** | **+20** | **+20.077** | **123 USDT** |
 
 - **A** bringt langfristig am meisten, braucht bis zum ersten Ziel aber im Median 182 und im schlimmsten Fall rund 700 USDT eigene Einzahlung – und hat seit März 2025 das Ziel nie erreicht.
-- **B + Polster** ist als einzige Einstellung in jedem Zeitraum im Plus und braucht die wenigste eigene Einzahlung; dafür etwa 45 % weniger Gewinn als A über 2021–2026.
+- **B + Polster** ist als einzige Einstellung in jedem Zeitraum im Plus und braucht die wenigste eigene Einzahlung.
+- **Dynamischer Neustart 15 %** macht daraus langfristig ein Vielfaches: Kontostand Jahresende 2022 +61 %, 2023 +115 %, 2024 +129 %, 2025 +99 %, 2026 bisher −29 %; größter Rückgang ab 1.000 USDT Konto 55 %. Bei frischem Start mit kleinem Konto ändert er nichts (2024–04/2026 frisch: +525 statt +480; 200 USDT ab Mai: gleich). Läuft der Bot schon mit großem Konto, brachte Mai bis heute +27 % (fest 30: +2 %). 10 % wären vorsichtiger (+9.466, Rückgang 57 %), 20 % kaum besser als 15 %, aber mit 67 % Rückgang.
 - **200 USDT am 1. Mai 2026** (30 Spiel + 170 Reserve, Bitget-Kurse): A und B heute 88 USDT, **B + Polster 220 USDT** – das Konto fiel dabei nie unter 153 USDT.
 - **Kleinere oder größere Ziele** (150 bis 2.000) und andere Anteile im Spiel wurden ebenfalls gerechnet: kleinere Ziele sind stetiger, größere bringen langfristig mehr, wechseln aber je Zeitraum die Rangfolge; Ziel 2.000 wurde 2024–2026 nie erreicht.
 
@@ -130,6 +133,7 @@ Backtest auf Binance-Futures-Kerzen (15m) von 42 Coins, Januar 2021 bis Oktober 
 7. **Hebel und TP:** x20 mit TP 7,5 % trifft nur 46 %, die Serien reißen ab; x15 mit TP 10 % knapp schlechter; x10 mit TP 7,5 % bleibt am besten.
 8. **Bitget-Trailing-Stop statt festem TP** (1m-Kerzen, 8 Coins): früh aktiviert weniger je Trade, ab +7,5 % gleichwertig – fester TP bleibt.
 9. **Verluste seit Mai 2026 untersucht:** Sperre für erneuten Einstieg im selben Coin, Alter und Überdehnung des Ausbruchs, BTC-Richtung – alles in 2021–2023 widerlegt oder schädlich. Die Trefferquote seit Mai ist normal; es fehlte nur eine lange Serie. Daraus entstanden Tresor, kleineres Ziel und Polster.
+10. **Dynamischer Neustart** (2,5–20 % des Kontos, Ziel fest oder mitwachsend): Ziel fest bei 400 und 15–20 % lagen in 2021–2023 vorn (+5.248 / +5.284); 15 % gewählt wegen deutlich geringerer Rückgänge. Ein mitwachsendes Ziel war durchweg schlechter.
 
 Skripte und Ergebnisse: [`forschung/`](forschung/).
 
@@ -141,7 +145,7 @@ Alle 15 Minuten, 20 Sekunden nach Kerzenschluss:
 
 1. **Offene Position:** Steht der Take-Profit auf Bitget? Fehlt er, wird er neu gesetzt.
 2. **Position verschwunden:** Ergebnis feststellen (TP oder Liquidation), übrige Orders stornieren, Serienzähler fortschreiben, bei Treffer den Polster-Anteil in den Tresor buchen, in `data/trades.csv` eintragen, Telegram.
-3. **Tresor** (nur ohne offene Position): Abhebung erkennen, bei erreichtem Ziel die Hälfte in den Tresor buchen, nach Liquidation aus dem Tresor auf 30 USDT auffüllen; ist auch der Tresor leer → Einzahl-Meldung.
+3. **Tresor** (nur ohne offene Position): Abhebung erkennen, bei erreichtem Ziel die Hälfte in den Tresor buchen, Spielgeld aus dem Tresor auf den Neustart-Betrag auffüllen (max. von 30 USDT und 15 % des Kontos); ist auch der Tresor leer → Einzahl-Meldung.
 4. **Einmal pro UTC-Tag:** Tagesbedingung für alle 42 Coins aus der letzten abgeschlossenen Tageskerze.
 5. **Coins mit Tagesbedingung:** 15m-Signal auf der gerade geschlossenen Kerze prüfen; bei Signal und freier Position: isolierte Margin und x10 setzen, Market-Order mit 97 % des Spielgelds, Take-Profit als reduce-only Trigger-Order zum tatsächlichen Füllkurs ± 7,5 %.
 
@@ -186,7 +190,7 @@ Speicherbedarf unter 200 MB; je 15 Minuten werden nur die Coins mit aktiver Tage
 | `tail -f logs/zockerbot.log` | laufendes Protokoll |
 | `cat data/trades.csv` | alle abgeschlossenen Trades mit Serienstand |
 | `.venv/bin/python3 backtest.py --von 2026-05-01 --tresor-start 170` | Backtest mit Bitget-Kerzen ab Datum (davor nur Indikator-Vorlauf), gleiche Signal-, Tresor- und Polster-Logik wie live, mit Trade-Liste |
-| `… backtest.py --ziel 1000 --im-spiel 0.2 --polster 0` | andere Einstellungen testen, ohne `settings.json` zu ändern; `--modus anteil --fraction 0.2` für den Anteilsmodus |
+| `… backtest.py --ziel 1000 --im-spiel 0.2 --polster 0 --neustart-anteil 0` | andere Einstellungen testen, ohne `settings.json` zu ändern; `--modus anteil --fraction 0.2` für den Anteilsmodus |
 | `./update.sh` | neue Version holen; `settings.json`, `secret.json`, `data/`, `logs/` bleiben |
 
 ### Einstellungen (`settings.json`)
@@ -203,7 +207,8 @@ Speicherbedarf unter 200 MB; je 15 Minuten werden nur die Coins mit aktiver Tage
 | `im_spiel_nach_ziel` | 0.50 | Anteil, der nach dem Ziel weiterspielt (Rest → Tresor) |
 | `polster_usdt` | 150 | Polster: bis der Tresor diesen Betrag plus deine eigene Reserve erreicht, geht ein Teil jedes Gewinns sofort in den Tresor (0 = aus) |
 | `polster_anteil` | 0.50 | Anteil jedes Gewinns, der ins Polster geht |
-| `neustart_usdt` | 30 | Mindest-Spielgeld; darauf wird nach einer Liquidation aus dem Tresor aufgefüllt |
+| `neustart_usdt` | 30 | Mindest-Neustart-Betrag (Spielgeld nach einer Liquidation) |
+| `neustart_anteil` | 0.15 | dynamischer Neustart: Spielgeld wird aus dem Tresor auf mindestens diesen Anteil des Kontos aufgefüllt (0 = immer 30 USDT) |
 | `margin_fraction` | 0.20 | Anteil des Kontos je Trade im Modus `anteil` |
 | `min_margin_usdt` | 5.0 | darunter kein Trade |
 | `strategy` | 14 / 40 / 75 / 25 / 30 / 70 | RSI-Länge, Donchian-Tage, Tages-RSI Long/Short, 15m-RSI Long/Short |
@@ -229,7 +234,8 @@ zockerbot/
 
 ## ⚠️ Risiken
 
-- **Kein Stop-Loss:** Ein Fehltreffer kostet die gesamte Margin dieses Trades – also das ganze Spielgeld. Der Tresor wird nie eingesetzt.
+- **Kein Stop-Loss:** Ein Fehltreffer kostet die gesamte Margin dieses Trades – also das ganze Spielgeld. Der Tresor wird nie direkt eingesetzt, finanziert aber jeden Neustart.
+- **Dynamischer Neustart:** Mit großem Konto setzt jeder Trade rund 15 % des Kontos; vier Liquidationen in Folge kosten dann etwa die Hälfte. Im Backtest fiel das Konto ab 1.000 USDT um bis zu 55 %, 2026 bisher −29 %.
 - **Serien sind Glück:** Ob ein Ziel fällt, hängt an einzelnen Trades – seit Mai 2026 entschied ein länger laufender Trade, ob eine 4er- oder 5er-Serie entstand. Jede Liquidation kostet den Tresor rund 29 USDT für den Neustart.
 - **2026 schwächer:** 56 % Treffer bei 27 Trades (Binance-Kurse), knapp unter der Gewinnschwelle von 57,4 %; mit Bitget-Kursen seit Mai 66,7 %.
 - **Backtest ≠ Zukunft:** Die Regel wurde aus vielen Varianten ausgewählt und gegengeprüft; der Vorteil von einigen Prozentpunkten Trefferquote kann verschwinden. Liquidationsabstand, Funding und Slippage auf Bitget können vom Backtest abweichen. Eine echte Order wurde vor dem ersten Live-Start noch nicht gesendet – den ersten Trade auf Bitget und in Telegram genau ansehen.

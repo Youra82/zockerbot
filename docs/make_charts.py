@@ -10,7 +10,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 T = pd.read_csv(os.path.join(HERE, "..", "forschung", "ausbruch_stark_trades.csv"), parse_dates=["einstieg", "ausstieg"])
 G = 0.075 * 10 - 0.008
 SCHWELLE = 100 / (1 + G)
-E, NEU, ZIEL, KEEP, POLSTER = 0.97, 30.0, 400.0, 0.5, 150.0
+E, NEU, ZIEL, KEEP, POLSTER, DYN = 0.97, 30.0, 400.0, 0.5, 150.0, 0.15
 
 # Modus serie, B + Polster: Spielgeld, Tresor, eigene Einzahlungen nach jedem Trade
 spiel, tresor, ein, rows, ziele = NEU, 0.0, NEU, [], []
@@ -20,15 +20,16 @@ for t, w in zip(T.ausstieg, T.treffer):
     if w and tresor < POLSTER:
         tresor += 0.5 * g; g *= 0.5
     spiel += g
+    neu = max(NEU, DYN * (spiel + tresor))            # dynamischer Neustart wie live
     if spiel >= ZIEL:
-        b = max(NEU, KEEP * spiel); tresor += spiel - b; spiel = b; ziele.append(t)
-    elif spiel < NEU:
-        need = NEU - spiel
+        b = max(neu, KEEP * spiel); tresor += spiel - b; spiel = b; ziele.append(t)
+    elif spiel < neu - 0.01:
+        need = neu - spiel
         if tresor >= need:
             tresor -= need
         else:
             ein += need - tresor; tresor = 0.0
-        spiel = NEU
+        spiel = neu
     rows.append((t, spiel, tresor, ein))
 S = pd.DataFrame(rows, columns=["d", "spiel", "tresor", "ein"])
 # Modus anteil 20 %
@@ -53,16 +54,16 @@ def frame(t, h):
 
 for name, t in themes.items():
     fig, ax = frame(t, 4.4)
-    ax.fill_between(S["d"], 0, S["tresor"], step="post", color=t["tf"], label="Tresor (wird nie eingesetzt)")
+    ax.fill_between(S["d"], 10, S["tresor"].clip(lower=10), step="post", color=t["tf"], label="Tresor (wird nie eingesetzt)")
     ax.step(S["d"], S["tresor"], where="post", color=t["t"], lw=1.4)
     ax.step(S["d"], S["spiel"], where="post", color=t["a"], lw=1.2, label="Spielgeld")
     ax.step(S["d"], S["ein"], where="post", color=t["ein"], lw=1.8, ls="--", label="eigene Einzahlungen gesamt")
     for d in ziele:
         v = S.loc[S["d"] == d, "tresor"].iloc[-1]
-        ax.scatter([d], [v], color=t["t"], s=26, zorder=3)
-    ax.set_ylabel("USDT"); ax.grid(color=t["grid"], lw=0.6); ax.set_ylim(0, max(S["tresor"].max(), S["spiel"].max()) * 1.12)
+        ax.scatter([d], [v], color=t["t"], s=7, zorder=3)
+    ax.set_yscale("log"); ax.set_ylabel("USDT (log)"); ax.grid(color=t["grid"], lw=0.6); ax.set_ylim(10, max(S["tresor"].max(), S["spiel"].max()) * 1.6)
     tz = f"{S['tresor'].iloc[-1]:,.0f}".replace(",", ".")
-    ax.set_title(f"B + Polster ab 30 USDT: Ziel 400 {len(ziele)}× erreicht, Tresor {tz} USDT, eingezahlt {S['ein'].iloc[-1]:.0f} USDT",
+    ax.set_title(f"B + Polster, Neustart 15 %: {len(ziele)}× Ziel, Tresor {tz} USDT, eingezahlt {S['ein'].iloc[-1]:.0f} USDT",
                  color=t["fg"], loc="left", fontsize=11.5)
     ax.legend(frameon=False, labelcolor=t["fg"], loc="upper left"); fig.tight_layout()
     fig.savefig(os.path.join(HERE, f"serie_{name}.png"), facecolor=t["bg"]); plt.close(fig)

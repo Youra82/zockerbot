@@ -10,6 +10,7 @@
     "ziel_usdt": 400,
     "im_spiel_nach_ziel": 0.50,
     "neustart_usdt": 30,
+    "neustart_anteil": 0.15,
     "polster_usdt": 150,
     "polster_anteil": 0.50,
     "margin_fraction": 0.20,

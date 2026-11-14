@@ -12,7 +12,8 @@ Alle 15 Minuten kurz nach Kerzenschluss:
 Modus „serie“: jeder Trade mit (fast) dem ganzen Spielgeld, Gewinne laufen mit (Zinseszins).
   Spielgeld = Konto minus Tresor. Erreicht das Spielgeld `ziel_usdt`, bleibt `im_spiel_nach_ziel`
   (mindestens `neustart_usdt`) im Spiel, der Rest wandert in den Tresor und wird nie eingesetzt.
-  Nach einer Liquidation füllt der Bot das Spielgeld aus dem Tresor wieder auf `neustart_usdt` auf.
+  Nach einer Liquidation füllt der Bot das Spielgeld aus dem Tresor wieder auf den Neustart-Betrag auf:
+  max(`neustart_usdt`, `neustart_anteil` × Konto) – mit großem Tresor wächst der Einsatz also mit.
   Polster: Solange der Tresor unter `polster_usdt` plus eigener Reserve (--tresor) liegt, geht
   `polster_anteil` jedes Gewinns sofort in den Tresor.
   Hebst du ab, erkennt der Bot den gesunkenen Kontostand und verkleinert den Tresor entsprechend.
@@ -286,6 +287,7 @@ def tresor_verwalten(cfg, st, tg, equity):
         st["reserve_eigen"] = min(st.get("reserve_eigen", 0.0), st["tresor"])
         telegram(tg, f"zockerbot: Abhebung erkannt. Konto {equity:.2f} USDT, Tresor jetzt {st['tresor']:.2f} USDT.")
     spiel = equity - st["tresor"]
+    neu = max(neu, cfg.get("neustart_anteil", 0.0) * equity)  # dynamischer Neustart: Anteil des ganzen Kontos
     if spiel >= cfg.get("ziel_usdt", 1e18):                  # Ziel: Teil bleibt im Spiel, Rest in den Tresor
         bleibt = max(neu, cfg.get("im_spiel_nach_ziel", 0.20) * spiel)
         st["tresor"] += spiel - bleibt
@@ -295,10 +297,10 @@ def tresor_verwalten(cfg, st, tg, equity):
                      f"{spiel - bleibt:.2f} USDT in den Tresor, {bleibt:.2f} USDT spielen weiter.\n"
                      f"Tresor gesamt {st['tresor']:.2f} USDT – kann jederzeit abgehoben werden.")
         log.info(f"Ziel erreicht: Tresor {st['tresor']:.2f}, Spielgeld {bleibt:.2f}")
-    elif spiel < neu and st["tresor"] > 0:                    # nach Liquidation: aus dem Tresor auffüllen
+    elif spiel < neu - 0.01 and st["tresor"] > 0:             # Spielgeld unter Neustart-Betrag: aus dem Tresor auffüllen
         nachschub = min(neu - spiel, st["tresor"])
         st["tresor"] -= nachschub
-        telegram(tg, f"zockerbot: neue Serie mit {spiel + nachschub:.2f} USDT – {nachschub:.2f} USDT aus dem Tresor "
+        telegram(tg, f"zockerbot: Spielgeld auf {spiel + nachschub:.2f} USDT aufgefüllt – {nachschub:.2f} USDT aus dem Tresor "
                      f"(Tresor jetzt {st['tresor']:.2f} USDT).")
         log.info(f"Aus Tresor aufgefüllt: {nachschub:.2f}, Tresor {st['tresor']:.2f}")
     if st["tresor"] != t0:
