@@ -63,12 +63,12 @@ Die Grafik zeigt die Serien ohne Tresor (jedes Mal neu 30 USDT). Mit Tresor fina
 
 | Was passiert am Ziel | Ziel 600 | **Ziel 1.000** | Ziel 2.000 |
 |---|---|---|---|
-| alles in den Tresor, mit 30 USDT weiter | +4.001 | +3.362 | +2.732 |
-| 10 % bleiben im Spiel | +3.594 | +4.032 | +4.167 |
-| **20 % bleiben im Spiel (Standard)** | +4.354 | **+3.585** | +3.771 |
-| 50 % bleiben im Spiel | +3.979 | +4.251 | +4.938 |
+| alles in den Tresor, mit 30 USDT weiter | +3.882 | +3.209 | +2.573 |
+| 10 % bleiben im Spiel | +3.436 | +3.854 | +3.989 |
+| **20 % bleiben im Spiel (Standard)** | +4.194 | **+3.393** | +3.621 |
+| 50 % bleiben im Spiel | +4.122 | +4.083 | +4.801 |
 
-Netto = Tresor + Spielgeld − eigene Einzahlungen; eingezahlt wurden in jeder Variante nur **226 USDT** (alles bis zum ersten erreichten Ziel). Mit Ziel 1.000 und 20 % im Spiel: 5 Ziele, netto +2.178 USDT in 2021–2023 und +1.407 USDT in 2024–2026 (jeweils frisch ab 30 USDT gestartet). Welche Variante vorn liegt, wechselt je Zeitraum; Ziel 2.000 wurde 2024–2026 nie erreicht. In den letzten 180 Tagen (Bitget-Kerzen) wurde auch Ziel 1.000 nicht erreicht: eingezahlt 197 USDT, netto −184 USDT.
+Netto = Tresor + Spielgeld − eigene Einzahlungen; eingezahlt wurden in jeder Variante nur **226 USDT** (alles bis zum ersten erreichten Ziel). Mit Ziel 1.000 und 20 % im Spiel: 5 Ziele, netto +2.097 USDT in 2021–2023 und +1.296 USDT in 2024–2026 (jeweils frisch ab 30 USDT gestartet). Welche Variante vorn liegt, wechselt je Zeitraum; Ziel 2.000 wurde 2024–2026 nie erreicht. In den letzten 180 Tagen (Bitget-Kerzen, 20 Trades, 65 % Treffer) wurde auch Ziel 1.000 nicht erreicht: eingezahlt 219 USDT, netto −168 USDT.
 
 ## 📏 Modus „anteil“
 
@@ -112,6 +112,9 @@ Backtest auf Binance-Futures-Kerzen (15m) von 42 Coins, Januar 2021 bis Oktober 
 3. Die meisten guten Varianten aus 2021–2023 kippten danach. **„Ausbruch stark“ (75/40, x10, TP 7,5 %) hielt:** 66,7 % Treffer 2021–2023, 66,0 % 2024–2026, Nachbarn mit 10 und 20 Tagen Donchian ähnlich.
 4. **Serien:** Im ganzen Suchraum gab es 217 Serien mit mindestens 10 Treffern in Folge à über +50 %. Welche Variante gerade eine Serie hat, wechselt – Serien kommen bei einer Trefferquote um 66 % immer wieder vor, sind aber nicht vorhersagbar.
 5. **Cockpit-Zonen** (Treppe/Aufzug/Rückprall) als Filter getestet: Je Signal treffen Einstiege nach einem schon laufenden Rücksetzer-Bein öfter (69/73 % statt 60/58 %), mit nur einer Position gleichzeitig bringt der Filter aber kein höheres Konto – deshalb nicht eingebaut. TP in Tages-σ statt fest 7,5 % war schlechter.
+6. **Mehrere Regeln gleichzeitig** (Zusatzregeln nur auf Gruppe A 2021–2023 gewählt): auf Gruppe A 2024–2026 je Trade −0,02 bis −0,04 statt +0,12; Serienmodus netto +1.950 bzw. +132 statt +5.552 USDT – nicht eingebaut.
+7. **Hebel und TP:** x20 mit TP 7,5 % hat je Trade mehr Kante, trifft aber nur 46 % – die Serien reißen ständig ab (Serienmodus −1.338 USDT). x15 mit TP 10 % knapp schlechter (+4.735). x10 mit TP 7,5 % bleibt das beste Konto.
+8. **Bitget-Trailing-Stop statt festem TP** (1m-Kerzen, 8 Coins): früh aktiviert (+2,5 % / +5 %) mehr Treffer, aber deutlich weniger je Trade; ab +7,5 % praktisch gleich wie der feste TP, mit 5 % Abstand 2024–2026 schlechter – fester TP bleibt.
 
 Skripte und Ergebnisse: [`forschung/`](forschung/).
 

@@ -12,6 +12,9 @@ Alle Skripte werden in diesem Ordner gestartet. Kerzen liegen nicht im Repo:
 | `streaks.py`, `streak_trades.py` | Serien mit ≥ 10 Treffern in Folge à > +50 % |
 | `absahnen.py` | Kontoverlauf „Ausbruch stark“, all-in mit Auszahlungsziel |
 | `tipp_zonen.py` | Cockpit-Zonen (Treppe/Aufzug/Rückprall) als Filter und als TP |
+| `multi.py` | mehrere Regeln gleichzeitig (Auswahl Gruppe A 2021–23) gegen die Einzelregel |
+| `levtp.py` | Hebel/TP-Varianten der Regel als Konto (Serie mit Tresor, Anteil) |
+| `tsl_test.py` | Bitget-Trailing-Stop statt festem TP auf 1m-Kerzen (8 Coins, Ordner per `ZB_KERZEN_1M`) |
 | `ausbruch_stark_trades.csv` | Trade-Folge des Bots (eine Position gleichzeitig, x10, TP 7,5 %), Grundlage der README-Grafiken |
 
 **v2 – „Rücksetzer im Ausbruch“ (abgelöst)**: `labels.py`, `features.py`, `search.py`, `analyse.py`, `holdout.py`, `winner.py`,

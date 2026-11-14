@@ -147,7 +147,7 @@ def main():
             if spiel >= cfg["ziel_usdt"]:
                 bleibt = max(neu, cfg.get("im_spiel_nach_ziel", 0.2) * spiel)
                 tresor += spiel - bleibt; spiel = bleibt; hits += 1
-            elif spiel < neu and spiel < cfg.get("min_margin_usdt", 5.0):
+            elif spiel < neu:                         # wie live: unter neustart_usdt aus dem Tresor auffüllen
                 need = neu - spiel
                 if tresor >= need:
                     tresor -= need
