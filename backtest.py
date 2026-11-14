@@ -87,12 +87,34 @@ def resolve(df15, k, side, tp, liq):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--days", type=int, default=365)
+    ap.add_argument("--days", type=int, default=365, help="gehandelter Zeitraum bis heute in Tagen")
+    ap.add_argument("--von", default=None, help="gehandelter Zeitraum ab Datum (JJJJ-MM-TT), ersetzt --days")
     ap.add_argument("--start", type=float, default=30.0)
     ap.add_argument("--modus", choices=["serie", "anteil"], default=None)
     ap.add_argument("--fraction", type=float, default=None)
+    ap.add_argument("--ziel", type=float, default=None, help="Modus serie: ziel_usdt überschreiben")
+    ap.add_argument("--im-spiel", type=float, default=None, help="Modus serie: im_spiel_nach_ziel überschreiben (0..1)")
+    ap.add_argument("--polster", type=float, default=None, help="Modus serie: polster_usdt überschreiben (0 = aus)")
+    ap.add_argument("--tresor-start", type=float, default=0.0, help="Modus serie: eigene Reserve im Tresor zum Start (wie live.py --tresor)")
     a = ap.parse_args()
+    if a.von:
+        try:
+            von = pd.Timestamp(a.von, tz="UTC")
+        except ValueError:
+            raise SystemExit(f"FEHLER: --von '{a.von}' ist kein Datum (JJJJ-MM-TT).")
+        a.days = int((pd.Timestamp.now(tz="UTC") - von).days) + 1
+    else:
+        von = pd.Timestamp.now(tz="UTC").normalize() - pd.Timedelta(days=a.days)
+    print(f"Gehandelt ab {von.date()} bis heute ({a.days} Tage), davor 60 Tage nur als Vorlauf für die Indikatoren")
     cfg = json.load(open(os.path.join(ROOT, "settings.json"), encoding="utf-8"))
+    if a.ziel is not None:
+        cfg["ziel_usdt"] = a.ziel
+    if a.im_spiel is not None:
+        if not 0 <= a.im_spiel <= 1:
+            raise SystemExit("FEHLER: --im-spiel muss zwischen 0 und 1 liegen.")
+        cfg["im_spiel_nach_ziel"] = a.im_spiel
+    if a.polster is not None:
+        cfg["polster_usdt"] = a.polster
     modus = a.modus or cfg["modus"]
     f = a.fraction if a.fraction is not None else cfg["margin_fraction"]
     lev, tp, kmax = cfg["leverage"], cfg["tp_pct"], cfg["max_positionen"]
@@ -110,9 +132,13 @@ def main():
             continue
         sig = strategy.signals(df15, df1d, cfg.get("strategy", {}))
         data[coin] = df15
+        n = 0
         for k in np.flatnonzero(sig.to_numpy() != 0):
+            if df15.index[k] + pd.Timedelta(minutes=15) < von:      # Vorlauf wird nicht gehandelt
+                continue
             events.append((df15.index[k], coin, int(k), int(sig.iloc[k])))
-        print(f"{coin:5s} {int((sig != 0).sum()):4d} Signal-Kerzen")
+            n += 1
+        print(f"{coin:5s} {n:4d} Signal-Kerzen")
     events.sort()
     taken, open_ = [], []                      # open_: (Ausstieg, Coin)
     for t, coin, k, side in events:
@@ -131,6 +157,9 @@ def main():
         return
     T["r"] = np.where(T.win, g, -1.0)
     T["jahr"] = T.entry.dt.year
+    print("\nTrades:")
+    for r in T.itertuples():
+        print(f"  {r.entry:%d.%m.%y %H:%M}  {r.coin:5s} {'Long ' if r.side > 0 else 'Short'}  -> {'TP' if r.win else 'Liquidation':11s} {r.exit:%d.%m.%y %H:%M}")
     print(f"\n{len(T)} Trades, Treffer {T.win.mean() * 100:.1f} % (Gewinnschwelle {100 / (1 + g):.1f} %), +{g * 100:.0f} % je Treffer")
     print(T.groupby("jahr").agg(trades=("win", "size"), treffer=("win", "mean")).round(3).to_string())
     best = cur = 0
@@ -141,9 +170,15 @@ def main():
     if modus == "serie":
         # wie live: Spielgeld = Konto - Tresor; Ziel -> Teil bleibt im Spiel, Rest Tresor; Liquidation -> aus Tresor auffüllen
         neu, e = float(cfg.get("neustart_usdt", 30)), cfg.get("serie_einsatz", 0.97)
-        spiel, tresor, ext, hits = a.start, 0.0, a.start, 0
+        pol, pol_anteil = float(cfg.get("polster_usdt", 0.0)), float(cfg.get("polster_anteil", 0.5))
+        spiel, tresor, ext, hits = a.start, a.tresor_start, a.start + a.tresor_start, 0
+        grenze = pol + a.tresor_start
         for r in T.sort_values("entry").r:
-            spiel += e * spiel * r
+            gewinn = e * spiel * r
+            if r > 0 and pol > 0 and tresor < grenze:          # wie live: Teil des Gewinns sofort ins Polster
+                tresor += pol_anteil * gewinn
+                gewinn *= 1 - pol_anteil
+            spiel += gewinn
             if spiel >= cfg["ziel_usdt"]:
                 bleibt = max(neu, cfg.get("im_spiel_nach_ziel", 0.2) * spiel)
                 tresor += spiel - bleibt; spiel = bleibt; hits += 1
@@ -154,7 +189,8 @@ def main():
                 else:
                     ext += need - tresor; tresor = 0.0
                 spiel = neu
-        print(f"Serie ab {a.start:.0f} USDT, Ziel {cfg['ziel_usdt']}, danach {cfg.get('im_spiel_nach_ziel', 0.2) * 100:.0f} % im Spiel: "
+        print(f"Serie ab {a.start:.0f} USDT + Reserve {a.tresor_start:.0f}, Ziel {cfg['ziel_usdt']}, danach "
+              f"{cfg.get('im_spiel_nach_ziel', 0.2) * 100:.0f} % im Spiel, Polster {pol:.0f}: "
               f"{hits}x erreicht | eingezahlt {ext:.0f} | Tresor {tresor:.0f} | Spielgeld {spiel:.0f} | netto {tresor + spiel - ext:+.0f} USDT")
     else:
         k, peak, mdd, op = a.start, a.start, 0.0, []

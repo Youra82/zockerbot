@@ -13,6 +13,8 @@ Modus „serie“: jeder Trade mit (fast) dem ganzen Spielgeld, Gewinne laufen m
   Spielgeld = Konto minus Tresor. Erreicht das Spielgeld `ziel_usdt`, bleibt `im_spiel_nach_ziel`
   (mindestens `neustart_usdt`) im Spiel, der Rest wandert in den Tresor und wird nie eingesetzt.
   Nach einer Liquidation füllt der Bot das Spielgeld aus dem Tresor wieder auf `neustart_usdt` auf.
+  Polster: Solange der Tresor unter `polster_usdt` plus eigener Reserve (--tresor) liegt, geht
+  `polster_anteil` jedes Gewinns sofort in den Tresor.
   Hebst du ab, erkennt der Bot den gesunkenen Kontostand und verkleinert den Tresor entsprechend.
 Modus „anteil“: jeder Trade mit `margin_fraction` des Kontos (ohne Tresor).
 
@@ -111,6 +113,7 @@ def load_state():
     st.setdefault("serie", 0)
     st.setdefault("beste_serie", 0)
     st.setdefault("tresor", 0.0)
+    st.setdefault("reserve_eigen", 0.0)
     st.setdefault("ziele", 0)
     st.setdefault("leer_gemeldet", False)
     st.pop("pausiert", None)
@@ -202,11 +205,17 @@ def check_closed(ex, cfg, st, tg, coin):
     df = df[df.index >= since.floor("15min")]
     side, tp = t["side"], t["tp"]
     hit = bool((df["high"] >= tp).any()) if side > 0 else bool((df["low"] <= tp).any())
+    polster_msg = ""
     if hit:
         st["serie"] += 1
         st["beste_serie"] = max(st["beste_serie"], st["serie"])
         pnl = t["margin"] * gain_per_hit(cfg)
         result = "TP"
+        grenze = cfg.get("polster_usdt", 0.0) + st.get("reserve_eigen", 0.0)
+        if cfg["modus"] == "serie" and cfg.get("polster_usdt", 0.0) > 0 and st["tresor"] < grenze:
+            teil = pnl * cfg.get("polster_anteil", 0.5)           # Polster: Teil des Gewinns sofort in den Tresor
+            st["tresor"] += teil
+            polster_msg = f"\n{teil:.2f} USDT ins Polster (Tresor {st['tresor']:.2f} von {grenze:.0f} USDT)"
     else:
         st["serie"] = 0
         pnl = -t["margin"]
@@ -218,7 +227,7 @@ def check_closed(ex, cfg, st, tg, coin):
     if hit:
         msg = (f"zockerbot TREFFER {st['serie']} in Folge: {coin} {'Long' if side > 0 else 'Short'}\n"
                f"+{gain_per_hit(cfg) * 100:.0f} % auf {t['margin']:.2f} USDT Margin = ca. +{pnl:.2f} USDT\n"
-               f"Beste Serie bisher: {st['beste_serie']}")
+               f"Beste Serie bisher: {st['beste_serie']}" + polster_msg)
     else:
         msg = (f"zockerbot Serie beendet: {coin} {'Long' if side > 0 else 'Short'} liquidiert\n"
                f"Margin {t['margin']:.2f} USDT verloren")
@@ -274,6 +283,7 @@ def tresor_verwalten(cfg, st, tg, equity):
     t0 = st["tresor"]
     if t0 > 0 and equity < t0 - 0.5:                        # abgehoben (Konto kleiner als Tresor): Tresor schrumpft mit
         st["tresor"] = max(0.0, equity - neu) if equity > neu else 0.0
+        st["reserve_eigen"] = min(st.get("reserve_eigen", 0.0), st["tresor"])
         telegram(tg, f"zockerbot: Abhebung erkannt. Konto {equity:.2f} USDT, Tresor jetzt {st['tresor']:.2f} USDT.")
     spiel = equity - st["tresor"]
     if spiel >= cfg.get("ziel_usdt", 1e18):                  # Ziel: Teil bleibt im Spiel, Rest in den Tresor
@@ -374,8 +384,10 @@ def main():
             sys.exit("FEHLER: --tresor braucht einen Betrag >= 0.")
         st = load_state()
         st["tresor"] = float(a.tresor)
+        st["reserve_eigen"] = float(a.tresor)                 # eigene Reserve: Polster wird zusätzlich darauf aufgebaut
         save_state(st)
-        print(f"Tresor auf {a.tresor:.2f} USDT gesetzt. Der laufende Bot nutzt den Wert ab dem nächsten 15m-Takt.")
+        print(f"Tresor auf {a.tresor:.2f} USDT gesetzt (eigene Reserve). Polster-Grenze jetzt "
+              f"{a.tresor + cfg.get('polster_usdt', 0.0):.0f} USDT. Der laufende Bot nutzt die Werte ab dem nächsten 15m-Takt.")
         return
     acc, tg = load_secret(required=not a.check)
     ex = Exchange(acc)
