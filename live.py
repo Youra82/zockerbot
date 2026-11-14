@@ -9,15 +9,18 @@ Alle 15 Minuten kurz nach Kerzenschluss:
      weniger als `max_positionen` offen sind – einsteigen: Market-Order, isolierte Margin,
      Take-Profit als reduce-only Trigger-Order. Kein Stop-Loss.
 
-Modus „serie“: jeder Trade mit (fast) dem ganzen freien Guthaben, Gewinne laufen mit (Zinseszins).
-  Ab `ziel_usdt` pausiert der Bot und meldet sich zum Abheben; weiter mit `live.py --weiter`.
-Modus „anteil“: jeder Trade mit `margin_fraction` des Kontos.
+Modus „serie“: jeder Trade mit (fast) dem ganzen Spielgeld, Gewinne laufen mit (Zinseszins).
+  Spielgeld = Konto minus Tresor. Erreicht das Spielgeld `ziel_usdt`, bleibt `im_spiel_nach_ziel`
+  (mindestens `neustart_usdt`) im Spiel, der Rest wandert in den Tresor und wird nie eingesetzt.
+  Nach einer Liquidation füllt der Bot das Spielgeld aus dem Tresor wieder auf `neustart_usdt` auf.
+  Hebst du ab, erkennt der Bot den gesunkenen Kontostand und verkleinert den Tresor entsprechend.
+Modus „anteil“: jeder Trade mit `margin_fraction` des Kontos (ohne Tresor).
 
 Aufruf:
-  python3 live.py            Dauerbetrieb (über start.sh / Cron-Wächter)
-  python3 live.py --check    nur anzeigen: Konto, Positionen, Tagesbedingungen, Signale (keine Orders)
-  python3 live.py --once     genau einen Durchlauf ausführen (mit Orders)
-  python3 live.py --weiter   Pause nach erreichtem Ziel aufheben
+  python3 live.py               Dauerbetrieb (über start.sh / Cron-Wächter)
+  python3 live.py --check       nur anzeigen: Konto, Tresor, Positionen, Tagesbedingungen, Signale (keine Orders)
+  python3 live.py --once        genau einen Durchlauf ausführen (mit Orders)
+  python3 live.py --tresor 250  Tresor von Hand auf 250 USDT setzen
 """
 import argparse
 import csv
@@ -107,8 +110,10 @@ def load_state():
     st.setdefault("open", {})
     st.setdefault("serie", 0)
     st.setdefault("beste_serie", 0)
-    st.setdefault("pausiert", False)
+    st.setdefault("tresor", 0.0)
+    st.setdefault("ziele", 0)
     st.setdefault("leer_gemeldet", False)
+    st.pop("pausiert", None)
     return st
 
 
@@ -217,6 +222,11 @@ def check_closed(ex, cfg, st, tg, coin):
     else:
         msg = (f"zockerbot Serie beendet: {coin} {'Long' if side > 0 else 'Short'} liquidiert\n"
                f"Margin {t['margin']:.2f} USDT verloren")
+    try:
+        eq, _ = ex.fetch_equity()
+        msg += f"\nKonto {eq:.2f} USDT | Tresor {st['tresor']:.2f} | Spielgeld {eq - st['tresor']:.2f}"
+    except Exception:
+        pass
     log.info(msg.replace("\n", " | "))
     telegram(tg, msg)
     save_state(st)
@@ -225,7 +235,8 @@ def check_closed(ex, cfg, st, tg, coin):
 def open_trade(ex, cfg, st, tg, coin, side, equity, free):
     lev = int(cfg["leverage"])
     if cfg["modus"] == "serie":
-        margin = free * cfg.get("serie_einsatz", 0.97)
+        spiel = equity - st["tresor"]
+        margin = min(spiel * cfg.get("serie_einsatz", 0.97), free * 0.97)
     else:
         margin = min(cfg["margin_fraction"] * equity, free * 0.97)
     if margin < cfg.get("min_margin_usdt", 5.0):
@@ -257,6 +268,33 @@ def open_trade(ex, cfg, st, tg, coin, side, equity, free):
     return True
 
 
+def tresor_verwalten(cfg, st, tg, equity):
+    """Abhebung erkennen, Ziel sichern, nach Liquidation aus dem Tresor auffüllen (nur Buchhaltung im Zustand)."""
+    neu = float(cfg.get("neustart_usdt", 30.0))
+    t0 = st["tresor"]
+    if t0 > 0 and equity < t0 - 0.5:                        # abgehoben (Konto kleiner als Tresor): Tresor schrumpft mit
+        st["tresor"] = max(0.0, equity - neu) if equity > neu else 0.0
+        telegram(tg, f"zockerbot: Abhebung erkannt. Konto {equity:.2f} USDT, Tresor jetzt {st['tresor']:.2f} USDT.")
+    spiel = equity - st["tresor"]
+    if spiel >= cfg.get("ziel_usdt", 1e18):                  # Ziel: Teil bleibt im Spiel, Rest in den Tresor
+        bleibt = max(neu, cfg.get("im_spiel_nach_ziel", 0.20) * spiel)
+        st["tresor"] += spiel - bleibt
+        st["ziele"] += 1
+        st["serie"] = 0
+        telegram(tg, f"zockerbot ZIEL {st['ziele']} ERREICHT: Spielgeld {spiel:.2f} USDT.\n"
+                     f"{spiel - bleibt:.2f} USDT in den Tresor, {bleibt:.2f} USDT spielen weiter.\n"
+                     f"Tresor gesamt {st['tresor']:.2f} USDT – kann jederzeit abgehoben werden.")
+        log.info(f"Ziel erreicht: Tresor {st['tresor']:.2f}, Spielgeld {bleibt:.2f}")
+    elif spiel < neu and st["tresor"] > 0:                    # nach Liquidation: aus dem Tresor auffüllen
+        nachschub = min(neu - spiel, st["tresor"])
+        st["tresor"] -= nachschub
+        telegram(tg, f"zockerbot: neue Serie mit {spiel + nachschub:.2f} USDT – {nachschub:.2f} USDT aus dem Tresor "
+                     f"(Tresor jetzt {st['tresor']:.2f} USDT).")
+        log.info(f"Aus Tresor aufgefüllt: {nachschub:.2f}, Tresor {st['tresor']:.2f}")
+    if st["tresor"] != t0:
+        save_state(st)
+
+
 def cycle(ex, cfg, tg, dry=False):
     st = load_state()
     keys = bool(ex.exchange.apiKey)
@@ -266,8 +304,8 @@ def cycle(ex, cfg, tg, dry=False):
     mine = {c: p for c, p in pos.items() if c in cfg["coins"]}
 
     if dry:
-        print(f"  Modus {cfg['modus']} | Konto {equity:.2f} USDT, frei {free:.2f} | Serie {st['serie']} (beste {st['beste_serie']})"
-              + (" | PAUSIERT (Ziel erreicht)" if st["pausiert"] else ""))
+        print(f"  Modus {cfg['modus']} | Konto {equity:.2f} USDT, frei {free:.2f} | Tresor {st['tresor']:.2f} | "
+              f"Spielgeld {equity - st['tresor']:.2f} | Serie {st['serie']} (beste {st['beste_serie']}) | Ziele erreicht {st['ziele']}")
         for c, p in mine.items():
             print(f"  offen: {c} {p.get('side')} {p.get('contracts')} @ {p.get('entryPrice')}")
     else:
@@ -285,22 +323,18 @@ def cycle(ex, cfg, tg, dry=False):
                     equity, free = ex.fetch_equity()
             except Exception as e:
                 log.error(f"{coin}: {type(e).__name__}: {e}", exc_info=True)
-        # 2. Ziel / leeres Konto
-        if cfg["modus"] == "serie" and not mine and not st["pausiert"] and equity >= cfg.get("ziel_usdt", 1e18):
-            st["pausiert"] = True
-            save_state(st)
-            telegram(tg, f"zockerbot ZIEL ERREICHT: Konto {equity:.2f} USDT (Ziel {cfg['ziel_usdt']} USDT).\n"
-                         f"Keine neuen Trades. Jetzt Gewinn abheben, dann auf dem MiniPC: .venv/bin/python3 live.py --weiter")
-            log.info("Ziel erreicht, pausiert")
-        if st["pausiert"]:
-            return
-        if keys and not mine and free < cfg.get("min_margin_usdt", 5.0):
+        # 2. Tresor (nur ohne offene Position, damit offene Gewinne/Verluste nichts verfälschen)
+        if cfg["modus"] == "serie" and keys and not mine:
+            tresor_verwalten(cfg, st, tg, equity)
+        spiel = equity - st["tresor"] if cfg["modus"] == "serie" else equity
+        if keys and not mine and spiel < cfg.get("min_margin_usdt", 5.0):
             if not st["leer_gemeldet"]:
                 st["leer_gemeldet"] = True
                 save_state(st)
-                telegram(tg, f"zockerbot: Konto leer ({equity:.2f} USDT). Für eine neue Serie USDT auf das Futures-Konto einzahlen.")
+                telegram(tg, f"zockerbot: Spielgeld leer ({spiel:.2f} USDT) und Tresor aufgebraucht. "
+                             f"Für eine neue Serie USDT auf das Futures-Konto einzahlen.")
             return
-        if st["leer_gemeldet"] and free >= cfg.get("min_margin_usdt", 5.0):
+        if st["leer_gemeldet"]:
             st["leer_gemeldet"] = False
             save_state(st)
 
@@ -331,16 +365,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true", help="nur anzeigen, keine Orders")
     ap.add_argument("--once", action="store_true", help="einen Durchlauf mit Orders")
-    ap.add_argument("--weiter", action="store_true", help="Pause nach erreichtem Ziel aufheben")
+    ap.add_argument("--tresor", type=float, default=None, help="Tresor von Hand auf diesen Betrag (USDT) setzen")
     a = ap.parse_args()
     setup_logging()
     cfg = load_settings()
-    if a.weiter:
+    if a.tresor is not None:
+        if a.tresor < 0:
+            sys.exit("FEHLER: --tresor braucht einen Betrag >= 0.")
         st = load_state()
-        st["pausiert"] = False
-        st["serie"] = 0
+        st["tresor"] = float(a.tresor)
         save_state(st)
-        print("Pause aufgehoben, Serienzähler auf 0. Der laufende Bot handelt ab dem nächsten 15m-Takt wieder.")
+        print(f"Tresor auf {a.tresor:.2f} USDT gesetzt. Der laufende Bot nutzt den Wert ab dem nächsten 15m-Takt.")
         return
     acc, tg = load_secret(required=not a.check)
     ex = Exchange(acc)
@@ -354,7 +389,8 @@ def main():
         return
     telegram(tg, f"zockerbot gestartet: {len(cfg['coins'])} Coins, x{cfg['leverage']}, TP {cfg['tp_pct'] * 100:.1f} %, "
                  f"max. {cfg['max_positionen']} Position(en), Modus {cfg['modus']}"
-                 + (f", Ziel {cfg.get('ziel_usdt')} USDT" if cfg["modus"] == "serie" else f", {cfg['margin_fraction'] * 100:.0f} % je Trade"))
+                 + (f", Ziel {cfg.get('ziel_usdt')} USDT, danach {cfg.get('im_spiel_nach_ziel', 0.2) * 100:.0f} % im Spiel, "
+                    f"Rest in den Tresor" if cfg["modus"] == "serie" else f", {cfg['margin_fraction'] * 100:.0f} % je Trade"))
     delay = int(cfg.get("delay_after_close_s", 20))
     while True:
         now = time.time()

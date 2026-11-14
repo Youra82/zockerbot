@@ -139,16 +139,23 @@ def main():
         best = max(best, cur)
     print(f"Längste Trefferserie: {best}")
     if modus == "serie":
-        k, dep, paid, hits, peak = a.start, a.start, 0.0, 0, a.start
+        # wie live: Spielgeld = Konto - Tresor; Ziel -> Teil bleibt im Spiel, Rest Tresor; Liquidation -> aus Tresor auffüllen
+        neu, e = float(cfg.get("neustart_usdt", 30)), cfg.get("serie_einsatz", 0.97)
+        spiel, tresor, ext, hits = a.start, 0.0, a.start, 0
         for r in T.sort_values("entry").r:
-            k *= 1 + r
-            peak = max(peak, k)
-            if k >= cfg["ziel_usdt"]:
-                paid += k; hits += 1; k = a.start; dep += a.start
-            elif k <= 0:
-                k = a.start; dep += a.start
-        print(f"Serie all-in ab {a.start:.0f} USDT, Ziel {cfg['ziel_usdt']}: {hits}x erreicht, eingezahlt {dep:.0f}, "
-              f"ausgezahlt {paid:.0f}, Konto jetzt {k:.2f} USDT")
+            spiel += e * spiel * r
+            if spiel >= cfg["ziel_usdt"]:
+                bleibt = max(neu, cfg.get("im_spiel_nach_ziel", 0.2) * spiel)
+                tresor += spiel - bleibt; spiel = bleibt; hits += 1
+            elif spiel < neu and spiel < cfg.get("min_margin_usdt", 5.0):
+                need = neu - spiel
+                if tresor >= need:
+                    tresor -= need
+                else:
+                    ext += need - tresor; tresor = 0.0
+                spiel = neu
+        print(f"Serie ab {a.start:.0f} USDT, Ziel {cfg['ziel_usdt']}, danach {cfg.get('im_spiel_nach_ziel', 0.2) * 100:.0f} % im Spiel: "
+              f"{hits}x erreicht | eingezahlt {ext:.0f} | Tresor {tresor:.0f} | Spielgeld {spiel:.0f} | netto {tresor + spiel - ext:+.0f} USDT")
     else:
         k, peak, mdd, op = a.start, a.start, 0.0, []
         for _, row in T.sort_values("entry").iterrows():

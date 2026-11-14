@@ -23,7 +23,7 @@
 - **Einstieg** beim 15m-Rücksetzer in einem starken Tagesausbruch, Long oder Short.
 - **Ausstieg** nur per Take-Profit bei **+7,5 % Kurs**, Hebel **x10 isoliert**, **kein Stop-Loss** (Liquidation bei ca. 9,5 % Gegenbewegung).
 - **Pro Treffer +74 %** auf die Margin, Gewinnschwelle **57,4 %** Treffer. Backtest 2021–2026: **66,1 %** Treffer, 224 Trades, längste Serie **12 Treffer in Folge**.
-- **Zwei Modi:** `serie` (all-in mit Zinseszins bis zum Ziel, dann Auszahlungs-Meldung) oder `anteil` (fester Anteil des Kontos je Trade).
+- **Zwei Modi:** `serie` (all-in mit Zinseszins; ab 1.000 USDT wandert der Großteil in einen Tresor, der Rest spielt weiter, Liquidationen füllt der Bot aus dem Tresor auf) oder `anteil` (fester Anteil des Kontos je Trade).
 - **Live = Backtest:** `live.py` und `backtest.py` nutzen dieselben Funktionen `strategy.day_flags()` und `strategy.signals()`; auf 42 Coins identisch mit der Forschung (2.675 von 2.675 Signalen).
 
 ---
@@ -47,24 +47,28 @@
 So, wie man ein kleines Konto hochzockt – nur mit fester Regel:
 
 1. Start mit z. B. **30 USDT** im Futures-Konto.
-2. Jeder Trade setzt **97 % des freien Guthabens** als Margin ein. Sieben Treffer in Folge machen aus 30 → 52 → 89 → 153 → 263 → 452 → 777 → 1.336 USDT.
-3. Ab **`ziel_usdt`** (Standard 1.100 USDT ≈ 1.000 €) eröffnet der Bot **keine neuen Trades** und schickt per Telegram: *Ziel erreicht – jetzt abheben*. Nach dem Abheben: `.venv/bin/python3 live.py --weiter`.
-4. Wird eine Position liquidiert, ist das Konto leer – der Bot meldet sich, und nach einer neuen Einzahlung beginnt die nächste Serie.
+2. Jeder Trade setzt **97 % des Spielgelds** als Margin ein (Spielgeld = Konto minus Tresor). Sieben Treffer in Folge machen aus 30 → 52 → 89 → 153 → 263 → 452 → 777 → 1.336 USDT.
+3. Erreicht das Spielgeld **`ziel_usdt`** (Standard 1.000 USDT), bleiben **20 %** (mindestens 30 USDT) im Spiel, **der Rest wandert in den Tresor**. Der Tresor wird nie eingesetzt – der Bot handelt ohne Pause weiter.
+4. Wird eine Position liquidiert, **füllt der Bot das Spielgeld aus dem Tresor wieder auf 30 USDT auf** und startet die nächste Serie. Einzahlen musst du nur, solange der Tresor leer ist.
+5. **Abheben jederzeit:** Hebst du (ohne offene Position) vom Futures-Konto ab, erkennt der Bot den kleineren Kontostand und verkleinert den Tresor, 30 USDT Spielgeld bleiben stehen.
 
-Jede Telegram-Nachricht nennt den Stand der Serie („TREFFER 6 in Folge“).
+Telegram meldet jeden Treffer mit Serienstand („TREFFER 6 in Folge“), jedes erreichte Ziel mit Tresorstand, jedes Auffüllen aus dem Tresor und erkannte Abhebungen.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/serie_dark.png">
   <img alt="Kontoverlauf im Serienmodus von 2021 bis 2026: viele kurze Serien, die bei einer Liquidation auf null fallen; viermal wird das Ziel von 1.100 USDT erreicht und ausgezahlt." src="docs/serie_light.png">
 </picture>
 
-| Ziel (`ziel_usdt`) | erreicht 2021–2026 | eingezahlt (je 30 USDT) | ausgezahlt |
-|---|---|---|---|
-| 600 | 8× | 2.550 USDT | 6.707 USDT |
-| **1.100** (Standard) | **4×** (07/2021, 08/2023, 11/2024, 05/2025) | **2.430 USDT** | **5.841 USDT** |
-| 5.000 | 1× (07/2021) | 2.340 USDT | 7.720 USDT |
+Die Grafik zeigt die Serien ohne Tresor (jedes Mal neu 30 USDT). Mit Tresor finanziert sich der Bot nach dem ersten erreichten Ziel selbst – Backtest 2021–2026, Start 30 USDT:
 
-Im Serienmodus wird **sehr oft neu eingezahlt** (rund 80 Mal in knapp 6 Jahren) – die Auszahlungen kommen aus wenigen langen Serien.
+| Was passiert am Ziel | Ziel 600 | **Ziel 1.000** | Ziel 2.000 |
+|---|---|---|---|
+| alles in den Tresor, mit 30 USDT weiter | +4.001 | +3.362 | +2.732 |
+| 10 % bleiben im Spiel | +3.594 | +4.032 | +4.167 |
+| **20 % bleiben im Spiel (Standard)** | +4.354 | **+3.585** | +3.771 |
+| 50 % bleiben im Spiel | +3.979 | +4.251 | +4.938 |
+
+Netto = Tresor + Spielgeld − eigene Einzahlungen; eingezahlt wurden in jeder Variante nur **226 USDT** (alles bis zum ersten erreichten Ziel). Mit Ziel 1.000 und 20 % im Spiel: 5 Ziele, netto +2.178 USDT in 2021–2023 und +1.407 USDT in 2024–2026 (jeweils frisch ab 30 USDT gestartet). Welche Variante vorn liegt, wechselt je Zeitraum; Ziel 2.000 wurde 2024–2026 nie erreicht. In den letzten 180 Tagen (Bitget-Kerzen) wurde auch Ziel 1.000 nicht erreicht: eingezahlt 197 USDT, netto −184 USDT.
 
 ## 📏 Modus „anteil“
 
@@ -119,7 +123,7 @@ Alle 15 Minuten, 20 Sekunden nach Kerzenschluss:
 
 1. **Offene Position:** steht der Take-Profit auf Bitget? Fehlt er, wird er neu gesetzt.
 2. **Position verschwunden:** Ergebnis feststellen (TP oder Liquidation), übrige Orders stornieren, Serienzähler fortschreiben, in `data/trades.csv` eintragen, Telegram.
-3. **Ziel / leeres Konto** (Modus serie): Ziel erreicht → Pause und Abhebe-Meldung; Konto leer → Einzahl-Meldung.
+3. **Tresor** (Modus serie, nur ohne offene Position): Abhebung erkennen, bei erreichtem Ziel den Großteil in den Tresor buchen, nach Liquidation aus dem Tresor auf 30 USDT auffüllen; ist auch der Tresor leer → Einzahl-Meldung.
 4. **Einmal pro UTC-Tag:** Tagesbedingung für alle 42 Coins aus der letzten abgeschlossenen Tageskerze.
 5. **Coins mit Tagesbedingung:** 15m-Signal auf der gerade geschlossenen Kerze prüfen; bei Signal und freier Position: isolierte Margin und x10 setzen, Market-Order, Take-Profit als reduce-only Trigger-Order zum tatsächlichen Füllkurs ± 7,5 %.
 
@@ -157,8 +161,8 @@ Speicherbedarf unter 200 MB; je 15 Minuten werden nur die Coins mit aktiver Tage
 
 | Befehl | Was er tut |
 |---|---|
-| `.venv/bin/python3 live.py --check` | Konto, Positionen, Tagesbedingungen, Signale – **keine Orders** |
-| `.venv/bin/python3 live.py --weiter` | nach erreichtem Ziel weitermachen (Serienzähler auf 0) |
+| `.venv/bin/python3 live.py --check` | Konto, Tresor, Spielgeld, Positionen, Tagesbedingungen, Signale – **keine Orders** |
+| `.venv/bin/python3 live.py --tresor 250` | Tresor von Hand auf 250 USDT setzen (z. B. nach einer Einzahlung, die geschützt bleiben soll) |
 | `./start.sh` / `./stop.sh` | Bot starten / stoppen (offene Positionen und TP-Orders bleiben auf Bitget) |
 | `tail -f logs/zockerbot.log` | laufendes Protokoll |
 | `cat data/trades.csv` | alle abgeschlossenen Trades mit Serienstand |
@@ -174,8 +178,10 @@ Speicherbedarf unter 200 MB; je 15 Minuten werden nur die Coins mit aktiver Tage
 | `leverage` | 10 | Hebel (isolierte Margin) |
 | `tp_pct` | 0.075 | Take-Profit in Kursprozent |
 | `max_positionen` | 1 | höchstens so viele offene Positionen über alle Coins |
-| `serie_einsatz` | 0.97 | Anteil des freien Guthabens je Trade im Modus `serie` |
-| `ziel_usdt` | 1100 | ab diesem Kontostand pausiert der Modus `serie` |
+| `serie_einsatz` | 0.97 | Anteil des Spielgelds je Trade im Modus `serie` |
+| `ziel_usdt` | 1000 | Spielgeld, ab dem gesichert wird |
+| `im_spiel_nach_ziel` | 0.20 | Anteil, der nach dem Ziel weiterspielt (Rest → Tresor) |
+| `neustart_usdt` | 30 | Mindest-Spielgeld; darauf wird nach einer Liquidation aus dem Tresor aufgefüllt |
 | `margin_fraction` | 0.20 | Anteil des Kontos je Trade im Modus `anteil` |
 | `min_margin_usdt` | 5.0 | darunter kein Trade |
 | `strategy` | 14 / 40 / 75 / 25 / 30 / 70 | RSI-Länge, Donchian-Tage, Tages-RSI Long/Short, 15m-RSI Long/Short |
@@ -184,7 +190,7 @@ Speicherbedarf unter 200 MB; je 15 Minuten werden nur die Coins mit aktiver Tage
 
 ## ⚠️ Risiken
 
-- **Kein Stop-Loss:** Ein Fehltreffer kostet die gesamte Margin dieses Trades – im Modus `serie` also das ganze Konto.
-- **Serien sind Glück:** Bei 66 % Trefferquote liegt die Chance auf 7 Treffer in Folge (30 → über 1.100 USDT) bei rund 5 % pro Start; der Backtest brauchte dafür im Schnitt etwa 20 neue Einzahlungen je erreichtem Ziel.
+- **Kein Stop-Loss:** Ein Fehltreffer kostet die gesamte Margin dieses Trades – im Modus `serie` also das ganze Spielgeld. Der Tresor wird nie eingesetzt.
+- **Serien sind Glück:** Bei 66 % Trefferquote liegt die Chance auf 7 Treffer in Folge (30 → über 1.000 USDT) bei rund 5 % pro Start; jede Liquidation danach kostet den Tresor 30 USDT für den Neustart.
 - **2026 schwächer:** 59 % Treffer bei 27 Trades, knapp über der Gewinnschwelle von 57,4 %.
 - **Backtest ≠ Zukunft:** Die Regel wurde aus vielen Varianten ausgewählt und gegengeprüft; der Vorteil von einigen Prozentpunkten Trefferquote kann verschwinden. Liquidationsabstand, Funding und Slippage auf Bitget können vom Backtest abweichen.
