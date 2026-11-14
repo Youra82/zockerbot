@@ -80,6 +80,19 @@ class Exchange:
         free = float(u.get("free") or 0.0)
         return total, free
 
+    def fetch_all_open_positions(self) -> dict:
+        """Alle offenen USDT-Futures-Positionen: {Basis-Coin: Position}. Wirft bei API-Fehlern weiter."""
+        self._ensure_markets()
+        last = None
+        for attempt in range(2):
+            try:
+                ps = self.exchange.fetch_positions(None, params=PRODUCT)
+                return {p["symbol"].split("/")[0]: p for p in ps if abs(float(p.get("contracts") or 0)) > 1e-12}
+            except Exception as e:
+                last = e
+                time.sleep(2)
+        raise last
+
     def fetch_open_positions(self, symbol: str) -> list:
         """Wirft bei API-Fehlern weiter: [] heißt garantiert 'keine Position'."""
         self._ensure_markets()

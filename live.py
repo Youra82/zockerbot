@@ -1,16 +1,23 @@
-"""zockerbot – Live-Betrieb auf Bitget (USDT-Perpetuals).
+"""zockerbot – Live-Betrieb auf Bitget (USDT-Perpetuals), Strategie „Ausbruch stark“.
 
 Alle 15 Minuten kurz nach Kerzenschluss:
-  1. Für jeden Coin: Position prüfen. Ist eine offen, sicherstellen, dass der Take-Profit steht.
-     Ist eine Position seit dem letzten Lauf verschwunden: Ergebnis (TP oder Liquidation) melden.
-  2. Ohne Position: Signal auf der gerade abgeschlossenen 15m-Kerze berechnen (strategy.signals)
-     und bei Signal einsteigen: Market-Order, isolierte Margin, Hebel laut settings.json,
-     Margin = Anteil des Kontos, Take-Profit als reduce-only Trigger-Order. Kein Stop-Loss.
+  1. Offene Positionen prüfen: Take-Profit vorhanden? Sonst neu setzen.
+     Ist eine Position seit dem letzten Lauf verschwunden: Ergebnis (TP oder Liquidation) melden,
+     Serienzähler fortschreiben.
+  2. Einmal pro UTC-Tag für alle Coins die Tagesbedingung bestimmen (strategy.day_flags).
+  3. Für Coins mit aktiver Tagesbedingung das 15m-Signal prüfen (strategy.signals) und – solange
+     weniger als `max_positionen` offen sind – einsteigen: Market-Order, isolierte Margin,
+     Take-Profit als reduce-only Trigger-Order. Kein Stop-Loss.
+
+Modus „serie“: jeder Trade mit (fast) dem ganzen freien Guthaben, Gewinne laufen mit (Zinseszins).
+  Ab `ziel_usdt` pausiert der Bot und meldet sich zum Abheben; weiter mit `live.py --weiter`.
+Modus „anteil“: jeder Trade mit `margin_fraction` des Kontos.
 
 Aufruf:
   python3 live.py            Dauerbetrieb (über start.sh / Cron-Wächter)
-  python3 live.py --check    nur anzeigen: Kontostand, Positionen, aktuelles Signal je Coin (keine Orders)
+  python3 live.py --check    nur anzeigen: Konto, Positionen, Tagesbedingungen, Signale (keine Orders)
   python3 live.py --once     genau einen Durchlauf ausführen (mit Orders)
+  python3 live.py --weiter   Pause nach erreichtem Ziel aufheben
 """
 import argparse
 import csv
@@ -34,6 +41,7 @@ LOGS = os.path.join(ROOT, "logs")
 STATE = os.path.join(DATA, "state.json")
 TRADES = os.path.join(DATA, "trades.csv")
 log = logging.getLogger("zockerbot")
+DAY_CACHE = {"datum": None, "flags": {}}
 
 
 def setup_logging():
@@ -54,6 +62,16 @@ def load_json(path, what):
         sys.exit(f"FEHLER: {what} fehlt: {path}")
     with open(path, encoding="utf-8") as f:
         return json.load(f)
+
+
+def load_settings():
+    cfg = load_json(os.path.join(ROOT, "settings.json"), "settings.json")
+    for k in ("coins", "modus", "leverage", "tp_pct", "max_positionen"):
+        if k not in cfg:
+            sys.exit(f"FEHLER: settings.json: Eintrag '{k}' fehlt.")
+    if cfg["modus"] not in ("serie", "anteil"):
+        sys.exit("FEHLER: settings.json: 'modus' muss 'serie' oder 'anteil' sein.")
+    return cfg
 
 
 def load_secret(required=True):
@@ -82,10 +100,16 @@ def telegram(tg: dict, text: str):
 
 
 def load_state():
+    st = {}
     if os.path.exists(STATE):
         with open(STATE, encoding="utf-8") as f:
-            return json.load(f)
-    return {"open": {}}
+            st = json.load(f)
+    st.setdefault("open", {})
+    st.setdefault("serie", 0)
+    st.setdefault("beste_serie", 0)
+    st.setdefault("pausiert", False)
+    st.setdefault("leer_gemeldet", False)
+    return st
 
 
 def save_state(st):
@@ -106,116 +130,199 @@ def log_trade(row: dict):
         w.writerow(row)
 
 
-def current_signal(ex: Exchange, symbol: str, params: dict, fresh_only: bool = True):
-    """Signal der zuletzt abgeschlossenen 15m-Kerze. Live nur gültig, wenn diese Kerze gerade erst schloss."""
-    df15 = ex.closed_only(ex.fetch_ohlcv(symbol, "15m", 400), "15m")
-    df1d = ex.closed_only(ex.fetch_ohlcv(symbol, "1d", 150), "1d")
-    if len(df15) < 100 or len(df1d) < 40:
-        log.warning(f"{symbol}: zu wenig Kerzen ({len(df15)} x 15m, {len(df1d)} x 1d)")
+def sym(coin: str) -> str:
+    return f"{coin}/USDT:USDT"
+
+
+def gain_per_hit(cfg) -> float:
+    return cfg["tp_pct"] * cfg["leverage"] - (cfg.get("taker_fee", 0.0006) + cfg.get("maker_fee", 0.0002)) * cfg["leverage"]
+
+
+def refresh_day_flags(ex, cfg, force=False):
+    """Einmal je UTC-Tag: Tagesbedingung aller Coins aus der letzten abgeschlossenen Tageskerze."""
+    today = pd.Timestamp.now(tz="UTC").date()
+    if DAY_CACHE["datum"] == today and not force:
+        return DAY_CACHE["flags"]
+    flags = {}
+    for coin in cfg["coins"]:
+        try:
+            d1 = ex.closed_only(ex.fetch_ohlcv(sym(coin), "1d", 150), "1d")
+            if len(d1) < cfg.get("strategy", {}).get("donchian_days", 40) + 20:
+                continue
+            f = int(strategy.day_flags(d1, cfg.get("strategy", {})).iloc[-1])
+            if f:
+                flags[coin] = f
+        except Exception as e:
+            log.error(f"Tageskerzen {coin}: {type(e).__name__}: {e}")
+            return DAY_CACHE["flags"] if DAY_CACHE["datum"] else {}
+    DAY_CACHE.update(datum=today, flags=flags)
+    log.info(f"Tagesbedingung {today}: " + (", ".join(f"{c} {'Long' if v > 0 else 'Short'}" for c, v in flags.items()) or "kein Coin"))
+    return flags
+
+
+def current_signal(ex, coin, params, fresh_only=True):
+    """Signal der zuletzt abgeschlossenen 15m-Kerze (dieselbe Funktion wie im Backtest)."""
+    df15 = ex.closed_only(ex.fetch_ohlcv(sym(coin), "15m", 400), "15m")
+    df1d = ex.closed_only(ex.fetch_ohlcv(sym(coin), "1d", 150), "1d")
+    if len(df15) < 100 or len(df1d) < 60:
         return 0, None
     sig = strategy.signals(df15, df1d, params)
     last = df15.index[-1]
     age = pd.Timestamp.now(tz="UTC") - (last + pd.Timedelta(minutes=15))
     if fresh_only and age > pd.Timedelta(minutes=10):
-        log.warning(f"{symbol}: letzte 15m-Kerze ist {age} alt, kein Einstieg")
+        log.warning(f"{coin}: letzte 15m-Kerze ist {age} alt, kein Einstieg")
         return 0, last
     return int(sig.iloc[-1]), last
 
 
-def check_closed(ex, cfg, st, tg, coin, symbol):
-    """Position aus dem Zustand ist auf der Börse weg -> Ergebnis feststellen und melden."""
-    t = st["open"].pop(coin)
-    ex.cancel_all(symbol)                      # übrig gebliebenen TP entfernen
-    since = pd.Timestamp(t["opened"])
-    minutes = int((pd.Timestamp.now(tz="UTC") - since).total_seconds() // 60) + 5
-    df = ex.fetch_ohlcv(symbol, "1m" if minutes <= 3000 else "15m", min(minutes if minutes <= 3000 else minutes // 15 + 2, 3000))
-    df = df[df.index >= since.floor("15min")]
-    side, tp = t["side"], t["tp"]
-    hit = bool((df["high"] >= tp).any()) if side > 0 else bool((df["low"] <= tp).any())
-    result = "TP" if hit else "Liquidation/manuell"
-    pnl = t["margin"] * (cfg["tp_pct"] * cfg["leverage"]) if hit else -t["margin"]
-    log_trade({"geschlossen": datetime.now(timezone.utc).isoformat(timespec="seconds"), "coin": coin,
-               "richtung": "Long" if side > 0 else "Short", "einstieg": t["entry"], "tp": tp,
-               "menge": t["amount"], "margin": round(t["margin"], 4), "ergebnis": result,
-               "pnl_ca": round(pnl, 4), "eroeffnet": t["opened"]})
-    msg = (f"zockerbot {coin} {'Long' if side > 0 else 'Short'} geschlossen: {result}\n"
-           f"Einstieg {t['entry']:.6g} | TP {tp:.6g} | Margin {t['margin']:.2f} USDT | ca. {pnl:+.2f} USDT")
-    log.info(msg.replace("\n", " | "))
-    telegram(tg, msg)
-
-
-def place_tp(ex, symbol, side, amount, tp) -> bool:
+def place_tp(ex, coin, side, amount, tp) -> bool:
     for attempt in range(2):
         try:
-            ex.take_profit(symbol, "sell" if side > 0 else "buy", amount, tp)
+            ex.take_profit(sym(coin), "sell" if side > 0 else "buy", amount, tp)
             return True
         except Exception as e:
-            log.error(f"TP {symbol} fehlgeschlagen ({attempt + 1}/2): {e}")
+            log.error(f"TP {coin} fehlgeschlagen ({attempt + 1}/2): {e}")
             time.sleep(2)
     return False
 
 
-def open_trade(ex, cfg, st, tg, coin, symbol, side, equity, free):
+def check_closed(ex, cfg, st, tg, coin):
+    """Position aus dem Zustand ist auf der Börse weg -> Ergebnis feststellen, Serie fortschreiben, melden."""
+    t = st["open"].pop(coin)
+    ex.cancel_all(sym(coin))
+    since = pd.Timestamp(t["opened"])
+    minutes = int((pd.Timestamp.now(tz="UTC") - since).total_seconds() // 60) + 5
+    tf, n = ("1m", minutes) if minutes <= 2900 else ("15m", minutes // 15 + 2)
+    df = ex.fetch_ohlcv(sym(coin), tf, min(n, 3000))
+    df = df[df.index >= since.floor("15min")]
+    side, tp = t["side"], t["tp"]
+    hit = bool((df["high"] >= tp).any()) if side > 0 else bool((df["low"] <= tp).any())
+    if hit:
+        st["serie"] += 1
+        st["beste_serie"] = max(st["beste_serie"], st["serie"])
+        pnl = t["margin"] * gain_per_hit(cfg)
+        result = "TP"
+    else:
+        st["serie"] = 0
+        pnl = -t["margin"]
+        result = "Liquidation/manuell"
+    log_trade({"geschlossen": datetime.now(timezone.utc).isoformat(timespec="seconds"), "coin": coin,
+               "richtung": "Long" if side > 0 else "Short", "einstieg": t["entry"], "tp": tp, "menge": t["amount"],
+               "margin": round(t["margin"], 4), "ergebnis": result, "pnl_ca": round(pnl, 4),
+               "serie_danach": st["serie"], "eroeffnet": t["opened"]})
+    if hit:
+        msg = (f"zockerbot TREFFER {st['serie']} in Folge: {coin} {'Long' if side > 0 else 'Short'}\n"
+               f"+{gain_per_hit(cfg) * 100:.0f} % auf {t['margin']:.2f} USDT Margin = ca. +{pnl:.2f} USDT\n"
+               f"Beste Serie bisher: {st['beste_serie']}")
+    else:
+        msg = (f"zockerbot Serie beendet: {coin} {'Long' if side > 0 else 'Short'} liquidiert\n"
+               f"Margin {t['margin']:.2f} USDT verloren")
+    log.info(msg.replace("\n", " | "))
+    telegram(tg, msg)
+    save_state(st)
+
+
+def open_trade(ex, cfg, st, tg, coin, side, equity, free):
     lev = int(cfg["leverage"])
-    margin = min(cfg["margin_fraction"] * equity, free * 0.95)
-    if margin < cfg.get("min_margin_usdt", 1.0):
+    if cfg["modus"] == "serie":
+        margin = free * cfg.get("serie_einsatz", 0.97)
+    else:
+        margin = min(cfg["margin_fraction"] * equity, free * 0.97)
+    if margin < cfg.get("min_margin_usdt", 5.0):
         log.info(f"{coin}: Signal, aber zu wenig freie Margin ({margin:.2f} USDT)")
-        return
-    ex.set_isolated(symbol)
-    ex.set_leverage(symbol, lev)
-    price = float(ex.exchange.fetch_ticker(symbol)["last"])
+        return False
+    ex.set_isolated(sym(coin))
+    ex.set_leverage(sym(coin), lev)
+    price = float(ex.exchange.fetch_ticker(sym(coin))["last"])
     amount = margin * lev / price
-    if amount < ex.min_amount(symbol):
-        log.info(f"{coin}: Menge {amount:.6g} unter Börsen-Minimum {ex.min_amount(symbol)}")
-        return
-    order = ex.market_order(symbol, "buy" if side > 0 else "sell", amount)
+    if amount < ex.min_amount(sym(coin)):
+        log.info(f"{coin}: Menge {amount:.6g} unter Börsen-Minimum {ex.min_amount(sym(coin))}")
+        return False
+    order = ex.market_order(sym(coin), "buy" if side > 0 else "sell", amount)
     entry = float(order.get("average") or order.get("price") or price)
     filled = float(order.get("filled") or order.get("amount") or amount)
     tp = strategy.tp_price(entry, side, cfg["tp_pct"])
     time.sleep(1)
-    tp_ok = place_tp(ex, symbol, side, filled, tp)
+    tp_ok = place_tp(ex, coin, side, filled, tp)
     st["open"][coin] = {"side": side, "entry": entry, "tp": tp, "amount": filled, "margin": margin,
                         "opened": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     save_state(st)
     liq = strategy.liquidation_distance(lev) * 100
-    msg = (f"zockerbot {coin} {'LONG' if side > 0 else 'SHORT'} eröffnet\n"
+    msg = (f"zockerbot {coin} {'LONG' if side > 0 else 'SHORT'} – Trade {st['serie'] + 1} der Serie\n"
            f"Einstieg {entry:.6g} | TP {tp:.6g} ({cfg['tp_pct'] * 100:+.1f} %) | ohne SL, Liquidation bei ca. {liq:.1f} %\n"
-           f"Margin {margin:.2f} USDT x{lev} | Konto {equity:.2f} USDT"
+           f"Margin {margin:.2f} USDT x{lev} | Konto {equity:.2f} USDT | Modus {cfg['modus']}"
            + ("" if tp_ok else "\nACHTUNG: TP konnte nicht gesetzt werden, nächster Lauf versucht es erneut"))
     log.info(msg.replace("\n", " | "))
     telegram(tg, msg)
+    return True
 
 
 def cycle(ex, cfg, tg, dry=False):
     st = load_state()
     keys = bool(ex.exchange.apiKey)
-    equity, free = ex.fetch_equity() if keys else (0.0, 0.0)
-    if not dry:
-        log.info(f"Durchlauf: Konto {equity:.2f} USDT, frei {free:.2f} USDT, offen: {list(st['open'])}")
     params = cfg.get("strategy", {})
-    for coin in cfg["coins"]:
-        symbol = f"{coin}/USDT:USDT"
-        try:
-            if keys:
-                pos = ex.fetch_open_positions(symbol)
-                if pos:
-                    t = st["open"].get(coin)
-                    if dry:
-                        print(f"  {coin:5s} Position offen: {pos[0].get('side')} {pos[0].get('contracts')} @ {pos[0].get('entryPrice')}")
-                    elif t and not ex.fetch_open_trigger_orders(symbol):
+    equity, free = ex.fetch_equity() if keys else (0.0, 0.0)
+    pos = ex.fetch_all_open_positions() if keys else {}
+    mine = {c: p for c, p in pos.items() if c in cfg["coins"]}
+
+    if dry:
+        print(f"  Modus {cfg['modus']} | Konto {equity:.2f} USDT, frei {free:.2f} | Serie {st['serie']} (beste {st['beste_serie']})"
+              + (" | PAUSIERT (Ziel erreicht)" if st["pausiert"] else ""))
+        for c, p in mine.items():
+            print(f"  offen: {c} {p.get('side')} {p.get('contracts')} @ {p.get('entryPrice')}")
+    else:
+        log.info(f"Durchlauf: Konto {equity:.2f} USDT, frei {free:.2f}, offen {list(mine)}, Serie {st['serie']}")
+        # 1. offene Positionen und geschlossene Trades
+        for coin in list(st["open"]):
+            try:
+                if coin in mine:
+                    if not ex.fetch_open_trigger_orders(sym(coin)):
                         log.warning(f"{coin}: Position ohne TP gefunden, setze TP neu")
-                        place_tp(ex, symbol, t["side"], float(pos[0]["contracts"]), t["tp"])
-                    continue
-                if coin in st["open"] and not dry:
-                    check_closed(ex, cfg, st, tg, coin, symbol)
-                    save_state(st)
-            sig, last = current_signal(ex, symbol, params, fresh_only=not dry)
+                        t = st["open"][coin]
+                        place_tp(ex, coin, t["side"], float(mine[coin]["contracts"]), t["tp"])
+                else:
+                    check_closed(ex, cfg, st, tg, coin)
+                    equity, free = ex.fetch_equity()
+            except Exception as e:
+                log.error(f"{coin}: {type(e).__name__}: {e}", exc_info=True)
+        # 2. Ziel / leeres Konto
+        if cfg["modus"] == "serie" and not mine and not st["pausiert"] and equity >= cfg.get("ziel_usdt", 1e18):
+            st["pausiert"] = True
+            save_state(st)
+            telegram(tg, f"zockerbot ZIEL ERREICHT: Konto {equity:.2f} USDT (Ziel {cfg['ziel_usdt']} USDT).\n"
+                         f"Keine neuen Trades. Jetzt Gewinn abheben, dann auf dem MiniPC: .venv/bin/python3 live.py --weiter")
+            log.info("Ziel erreicht, pausiert")
+        if st["pausiert"]:
+            return
+        if keys and not mine and free < cfg.get("min_margin_usdt", 5.0):
+            if not st["leer_gemeldet"]:
+                st["leer_gemeldet"] = True
+                save_state(st)
+                telegram(tg, f"zockerbot: Konto leer ({equity:.2f} USDT). Für eine neue Serie USDT auf das Futures-Konto einzahlen.")
+            return
+        if st["leer_gemeldet"] and free >= cfg.get("min_margin_usdt", 5.0):
+            st["leer_gemeldet"] = False
+            save_state(st)
+
+    # 3. Signale
+    flags = refresh_day_flags(ex, cfg)
+    if dry:
+        print("  Tagesbedingung heute: " + (", ".join(f"{c} {'Long' if v > 0 else 'Short'}" for c, v in flags.items()) or "kein Coin"))
+    n_open = len(set(mine) | set(st["open"]))
+    for coin in cfg["coins"]:
+        if coin not in flags or coin in mine:
+            continue
+        if not dry and n_open >= cfg["max_positionen"]:
+            break
+        try:
+            sig, last = current_signal(ex, coin, params, fresh_only=not dry)
             if dry:
                 print(f"  {coin:5s} letzte 15m-Kerze {last} -> Signal {['Short', '-', 'Long'][sig + 1]}")
                 continue
-            if sig != 0:
-                open_trade(ex, cfg, st, tg, coin, symbol, sig, equity, free)
-                equity, free = ex.fetch_equity()
+            if sig != 0 and sig == flags[coin]:
+                if open_trade(ex, cfg, st, tg, coin, sig, equity, free):
+                    n_open += 1
+                    equity, free = ex.fetch_equity()
         except Exception as e:
             log.error(f"{coin}: {type(e).__name__}: {e}", exc_info=True)
 
@@ -224,30 +331,39 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true", help="nur anzeigen, keine Orders")
     ap.add_argument("--once", action="store_true", help="einen Durchlauf mit Orders")
+    ap.add_argument("--weiter", action="store_true", help="Pause nach erreichtem Ziel aufheben")
     a = ap.parse_args()
     setup_logging()
-    cfg = load_json(os.path.join(ROOT, "settings.json"), "settings.json")
+    cfg = load_settings()
+    if a.weiter:
+        st = load_state()
+        st["pausiert"] = False
+        st["serie"] = 0
+        save_state(st)
+        print("Pause aufgehoben, Serienzähler auf 0. Der laufende Bot handelt ab dem nächsten 15m-Takt wieder.")
+        return
     acc, tg = load_secret(required=not a.check)
     ex = Exchange(acc)
     if a.check:
         print(f"zockerbot --check  ({len(cfg['coins'])} Coins, x{cfg['leverage']}, TP {cfg['tp_pct'] * 100:.1f} %, "
-              f"Margin {cfg['margin_fraction'] * 100:.0f} % je Trade)")
-        if ex.exchange.apiKey:
-            e, f = ex.fetch_equity()
-            print(f"  Konto {e:.2f} USDT, frei {f:.2f} USDT")
+              f"max. {cfg['max_positionen']} Position(en), Modus {cfg['modus']})")
         cycle(ex, cfg, tg, dry=True)
         return
     if a.once:
         cycle(ex, cfg, tg)
         return
     telegram(tg, f"zockerbot gestartet: {len(cfg['coins'])} Coins, x{cfg['leverage']}, TP {cfg['tp_pct'] * 100:.1f} %, "
-                 f"Margin {cfg['margin_fraction'] * 100:.0f} % je Trade")
+                 f"max. {cfg['max_positionen']} Position(en), Modus {cfg['modus']}"
+                 + (f", Ziel {cfg.get('ziel_usdt')} USDT" if cfg["modus"] == "serie" else f", {cfg['margin_fraction'] * 100:.0f} % je Trade"))
     delay = int(cfg.get("delay_after_close_s", 20))
     while True:
         now = time.time()
         nxt = (now // 900 + 1) * 900 + delay
         time.sleep(max(1, nxt - now))
-        cycle(ex, cfg, tg)
+        try:
+            cycle(ex, cfg, tg)
+        except Exception as e:
+            log.error(f"Durchlauf abgebrochen: {type(e).__name__}: {e}", exc_info=True)
 
 
 if __name__ == "__main__":

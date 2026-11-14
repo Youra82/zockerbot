@@ -1,18 +1,23 @@
 """zockerbot – Backtest mit Bitget-Kerzen und DERSELBEN Signalfunktion wie live (strategy.signals).
 
-Einstieg zur Eröffnung der nächsten 15m-Kerze, TP und Liquidation werden auf 15m-Hoch/Tief
-geprüft; erreicht eine Kerze beides, zählt es als Liquidation (vorsichtig).
-Ein Konto für alle Coins, Margin = Anteil des Kontostands bei Einstieg (höchstens frei verfügbar).
+Wie live: alle Coins, Signale in zeitlicher Reihenfolge, höchstens `max_positionen` gleichzeitig,
+Einstieg zur Eröffnung der nächsten 15m-Kerze. TP und Liquidation werden auf 15m-Hoch/Tief geprüft;
+erreicht eine Kerze beides, zählt es als Liquidation (vorsichtig).
+
+Modus „serie“: all-in mit Zinseszins, ab `ziel_usdt` wird ausgezahlt und mit `--start` neu begonnen,
+nach einer Liquidation wird `--start` neu eingezahlt. Modus „anteil“: Margin = Anteil des Kontos.
 
   python3 backtest.py --days 365
-  python3 backtest.py --days 730 --start 30 --fraction 0.15
+  python3 backtest.py --days 730 --start 30 --modus anteil --fraction 0.2
 Kerzen werden unter data/cache/ zwischengespeichert.
 """
 import argparse
 import heapq
 import json
 import os
+import time
 
+import ccxt
 import numpy as np
 import pandas as pd
 
@@ -34,8 +39,18 @@ def history(ex: Exchange, symbol: str, tf: str, days: int) -> pd.DataFrame:
         since = int(old.index[-1].timestamp() * 1000)
     rows, last = [], None
     tf_ms = ex.exchange.parse_timeframe(tf) * 1000
+    tries = 0
     while since < end - tf_ms:
-        batch = ex.exchange.fetch_ohlcv(symbol, tf, since, 200)
+        try:
+            batch = ex.exchange.fetch_ohlcv(symbol, tf, since, 200)
+        except ccxt.NetworkError:                 # inkl. 429 Too Many Requests
+            tries += 1
+            if tries > 8:
+                raise
+            time.sleep(2 * tries)
+            continue
+        tries = 0
+        time.sleep(0.12)
         batch = [c for c in batch if last is None or c[0] > last]
         if not batch:
             break
@@ -51,81 +66,101 @@ def history(ex: Exchange, symbol: str, tf: str, days: int) -> pd.DataFrame:
     return df[df.index >= pd.Timestamp(start, unit="ms", tz="UTC")]
 
 
-def trades_for(df15, df1d, cfg):
-    sig = strategy.signals(df15, df1d, cfg.get("strategy", {}))
-    lev, tp = cfg["leverage"], cfg["tp_pct"]
-    liq = strategy.liquidation_distance(lev)
+def resolve(df15, k, side, tp, liq):
+    """Ergebnis eines Einstiegs zur Eröffnung von Kerze k+1: (gewonnen, Ausstiegszeit) oder None (noch offen)."""
     o, h, l = df15["open"].to_numpy(), df15["high"].to_numpy(), df15["low"].to_numpy()
-    t = df15.index
-    out, busy = [], -1
-    for k in np.flatnonzero(sig.to_numpy() != 0):
-        if k <= busy or k + 1 >= len(o):
-            continue
-        side = int(sig.iloc[k])
-        px = o[k + 1]
-        up, dn = (px * (1 + tp), px * (1 - liq)) if side > 0 else (px * (1 + liq), px * (1 - tp))
-        ia = np.flatnonzero(h[k + 1:] >= up)
-        ib = np.flatnonzero(l[k + 1:] <= dn)
-        a = ia[0] if len(ia) else -1
-        b = ib[0] if len(ib) else -1
-        hit_tp, hit_liq = (a, b) if side > 0 else (b, a)
-        if hit_tp == -1 and hit_liq == -1:
-            continue                                # noch offen
-        if hit_liq != -1 and (hit_tp == -1 or hit_liq <= hit_tp):
-            win, j = 0, hit_liq
-        else:
-            win, j = 1, hit_tp
-        x = k + 1 + j
-        r = tp * lev - (cfg["taker_fee"] + cfg["maker_fee"]) * lev if win else -1.0
-        out.append((t[k + 1], t[x] + pd.Timedelta(minutes=15), side, win, r))
-        busy = x
-    return out
+    if k + 1 >= len(o):
+        return None
+    px = o[k + 1]
+    up, dn = (px * (1 + tp), px * (1 - liq)) if side > 0 else (px * (1 + liq), px * (1 - tp))
+    ia = np.flatnonzero(h[k + 1:] >= up)
+    ib = np.flatnonzero(l[k + 1:] <= dn)
+    a = ia[0] if len(ia) else -1
+    b = ib[0] if len(ib) else -1
+    hit_tp, hit_liq = (a, b) if side > 0 else (b, a)
+    if hit_tp == -1 and hit_liq == -1:
+        return None
+    if hit_liq != -1 and (hit_tp == -1 or hit_liq <= hit_tp):
+        return False, df15.index[k + 1 + hit_liq] + pd.Timedelta(minutes=15)
+    return True, df15.index[k + 1 + hit_tp] + pd.Timedelta(minutes=15)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=365)
     ap.add_argument("--start", type=float, default=30.0)
+    ap.add_argument("--modus", choices=["serie", "anteil"], default=None)
     ap.add_argument("--fraction", type=float, default=None)
     a = ap.parse_args()
     cfg = json.load(open(os.path.join(ROOT, "settings.json"), encoding="utf-8"))
+    modus = a.modus or cfg["modus"]
     f = a.fraction if a.fraction is not None else cfg["margin_fraction"]
+    lev, tp, kmax = cfg["leverage"], cfg["tp_pct"], cfg["max_positionen"]
+    liq = strategy.liquidation_distance(lev)
+    g = tp * lev - (cfg["taker_fee"] + cfg["maker_fee"]) * lev
     ex = Exchange()
-    allt = []
+    data, events = {}, []
     for coin in cfg["coins"]:
         sym = f"{coin}/USDT:USDT"
-        df15 = history(ex, sym, "15m", a.days)
-        df1d = history(ex, sym, "1d", a.days + 60)
-        tr = trades_for(df15, df1d, cfg)
-        allt += [(coin, *x) for x in tr]
-        wr = np.mean([x[3] for x in tr]) * 100 if tr else float("nan")
-        print(f"{coin:5s} {len(tr):4d} Trades, Treffer {wr:5.1f} %")
-    T = pd.DataFrame(allt, columns=["coin", "entry", "exit", "side", "win", "r"]).sort_values("entry")
+        try:
+            df15 = history(ex, sym, "15m", a.days)
+            df1d = history(ex, sym, "1d", a.days + 60)
+        except Exception as e:
+            print(f"{coin}: keine Daten ({e})")
+            continue
+        sig = strategy.signals(df15, df1d, cfg.get("strategy", {}))
+        data[coin] = df15
+        for k in np.flatnonzero(sig.to_numpy() != 0):
+            events.append((df15.index[k], coin, int(k), int(sig.iloc[k])))
+        print(f"{coin:5s} {int((sig != 0).sum()):4d} Signal-Kerzen")
+    events.sort()
+    taken, open_ = [], []                      # open_: (Ausstieg, Coin)
+    for t, coin, k, side in events:
+        open_ = [(x, c) for x, c in open_ if x > t]
+        if len(open_) >= kmax or any(c == coin for _, c in open_):
+            continue
+        res = resolve(data[coin], k, side, tp, liq)
+        if res is None:
+            continue
+        win, xt = res
+        taken.append((t + pd.Timedelta(minutes=15), xt, coin, side, win))
+        open_.append((xt, coin))
+    T = pd.DataFrame(taken, columns=["entry", "exit", "coin", "side", "win"])
     if T.empty:
         print("Keine Trades.")
         return
+    T["r"] = np.where(T.win, g, -1.0)
     T["jahr"] = T.entry.dt.year
-    print("\nJe Jahr:")
-    print(T.groupby("jahr").agg(trades=("win", "size"), treffer=("win", "mean"), je_trade=("r", "mean")).round(3).to_string())
-    eq, peak, mdd, open_ = a.start, a.start, 0.0, []
-    for _, row in T.iterrows():
-        while open_ and open_[0][0] <= row.entry:
-            _, m, r = heapq.heappop(open_)
-            eq += m * r
-            peak = max(peak, eq)
-            mdd = max(mdd, 1 - eq / peak)
-        used = sum(m for _, m, _ in open_)
-        m = min(f * eq, eq - used)
-        if m > 0:
-            heapq.heappush(open_, (row.exit, m, row.r))
-    while open_:
-        _, m, r = heapq.heappop(open_)
-        eq += m * r
-        peak = max(peak, eq)
-        mdd = max(mdd, 1 - eq / peak)
-    print(f"\n{len(T)} Trades, Treffer {T.win.mean()*100:.1f} % (Gewinnschwelle ca. "
-          f"{100/(1+cfg['tp_pct']*cfg['leverage']-(cfg['taker_fee']+cfg['maker_fee'])*cfg['leverage']):.1f} %)")
-    print(f"Konto: {a.start:.2f} -> {eq:.2f} USDT bei {f*100:.0f} % Margin je Trade, größter Rückgang {mdd*100:.0f} %")
+    print(f"\n{len(T)} Trades, Treffer {T.win.mean() * 100:.1f} % (Gewinnschwelle {100 / (1 + g):.1f} %), +{g * 100:.0f} % je Treffer")
+    print(T.groupby("jahr").agg(trades=("win", "size"), treffer=("win", "mean")).round(3).to_string())
+    best = cur = 0
+    for w in T.win:
+        cur = cur + 1 if w else 0
+        best = max(best, cur)
+    print(f"Längste Trefferserie: {best}")
+    if modus == "serie":
+        k, dep, paid, hits, peak = a.start, a.start, 0.0, 0, a.start
+        for r in T.sort_values("entry").r:
+            k *= 1 + r
+            peak = max(peak, k)
+            if k >= cfg["ziel_usdt"]:
+                paid += k; hits += 1; k = a.start; dep += a.start
+            elif k <= 0:
+                k = a.start; dep += a.start
+        print(f"Serie all-in ab {a.start:.0f} USDT, Ziel {cfg['ziel_usdt']}: {hits}x erreicht, eingezahlt {dep:.0f}, "
+              f"ausgezahlt {paid:.0f}, Konto jetzt {k:.2f} USDT")
+    else:
+        k, peak, mdd, op = a.start, a.start, 0.0, []
+        for _, row in T.sort_values("entry").iterrows():
+            while op and op[0][0] <= row.entry:
+                _, m, r = heapq.heappop(op); k += m * r; peak = max(peak, k); mdd = max(mdd, 1 - k / peak)
+            m = min(f * k, k - sum(x[1] for x in op))
+            if m > 0:
+                heapq.heappush(op, (row.exit, m, row.r))
+        while op:
+            _, m, r = heapq.heappop(op); k += m * r; peak = max(peak, k); mdd = max(mdd, 1 - k / peak)
+        print(f"Anteil {f * 100:.0f} %: {a.start:.2f} -> {k:.2f} USDT, größter Rückgang {mdd * 100:.0f} %")
+    os.makedirs(os.path.join(ROOT, "data"), exist_ok=True)
     T.to_csv(os.path.join(ROOT, "data", "backtest_trades.csv"), index=False)
 
 
