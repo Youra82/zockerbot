@@ -10,18 +10,27 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 T = pd.read_csv(os.path.join(HERE, "..", "forschung", "ausbruch_stark_trades.csv"), parse_dates=["einstieg", "ausstieg"])
 G = 0.075 * 10 - 0.008
 SCHWELLE = 100 / (1 + G)
-ZIEL = 1100
+E, NEU, ZIEL, KEEP, POLSTER = 0.97, 30.0, 400.0, 0.5, 150.0
 
-# Modus serie: all-in, bei Ziel auszahlen, nach Liquidation 30 neu
-serie, k, auszahl = [], 30.0, []
+# Modus serie, B + Polster: Spielgeld, Tresor, eigene Einzahlungen nach jedem Trade
+spiel, tresor, ein, rows, ziele = NEU, 0.0, NEU, [], []
+rows.append((T.einstieg.iloc[0], spiel, tresor, ein))
 for t, w in zip(T.ausstieg, T.treffer):
-    k *= (1 + G) if w else 0.0
-    serie.append((t, k if k > 0 else 0.5))
-    if k >= ZIEL:
-        auszahl.append((t, k)); k = 30.0; serie.append((t, k))
-    elif k <= 0:
-        k = 30.0; serie.append((t, k))
-serie = pd.DataFrame(serie, columns=["d", "konto"])
+    g = E * spiel * (G if w else -1.0)
+    if w and tresor < POLSTER:
+        tresor += 0.5 * g; g *= 0.5
+    spiel += g
+    if spiel >= ZIEL:
+        b = max(NEU, KEEP * spiel); tresor += spiel - b; spiel = b; ziele.append(t)
+    elif spiel < NEU:
+        need = NEU - spiel
+        if tresor >= need:
+            tresor -= need
+        else:
+            ein += need - tresor; tresor = 0.0
+        spiel = NEU
+    rows.append((t, spiel, tresor, ein))
+S = pd.DataFrame(rows, columns=["d", "spiel", "tresor", "ein"])
 # Modus anteil 20 %
 k, ant = 30.0, []
 for t, w in zip(T.ausstieg, T.treffer):
@@ -29,8 +38,8 @@ for t, w in zip(T.ausstieg, T.treffer):
 ant = pd.DataFrame(ant, columns=["d", "konto"])
 yr = T.assign(j=T.einstieg.dt.year).groupby("j").agg(n=("treffer", "size"), wr=("treffer", "mean"))
 
-themes = {"light": dict(bg="#ffffff", fg="#1f2328", mu="#656d76", grid="#e6e8eb", a="#2f6feb", b="#c9772b", ok="#1a7f37", bad="#cf222e"),
-          "dark": dict(bg="#0d1117", fg="#e6edf3", mu="#8b949e", grid="#30363d", a="#58a6ff", b="#e3a35b", ok="#3fb950", bad="#f85149")}
+themes = {"light": dict(bg="#ffffff", fg="#1f2328", mu="#656d76", grid="#e6e8eb", a="#2f6feb", b="#c9772b", t="#b07a1a", tf="#f3e3c3", ok="#1a7f37", bad="#cf222e", ein="#8a909b"),
+          "dark": dict(bg="#0d1117", fg="#e6edf3", mu="#8b949e", grid="#30363d", a="#58a6ff", b="#e3a35b", t="#e0ad4f", tf="#3a2e17", ok="#3fb950", bad="#f85149", ein="#7d8593")}
 
 
 def frame(t, h):
@@ -43,18 +52,19 @@ def frame(t, h):
 
 
 for name, t in themes.items():
-    fig, ax = frame(t, 4.2)
-    ax.step(serie["d"], serie["konto"], where="post", color=t["a"], lw=1.6, label="Modus serie: all-in, Auszahlung bei 1.100 USDT")
-    for d, v in auszahl:
-        ax.scatter([d], [v], color=t["ok"], s=40, zorder=3)
-    ax.axhline(ZIEL, color=t["ok"], lw=1, ls="--")
-    ax.text(serie["d"].iloc[-1], ZIEL * 0.6, f"Ziel {ZIEL:,} USDT: {len(auszahl)}× erreicht (grüne Punkte)".replace(",", "."),
-            color=t["ok"], fontsize=10, ha="right")
-    ax.set_yscale("log"); ax.set_ylim(0.4, ZIEL * 2.2); ax.set_ylabel("Konto in USDT (log, Liquidation = unten)")
-    ax.grid(color=t["grid"], lw=0.6)
-    ax.set_title("Serienmodus: all-in ab 30 USDT, Auszahlung bei 1.100, nach Liquidation neu 30 (Backtest 2021–2026)",
+    fig, ax = frame(t, 4.4)
+    ax.fill_between(S["d"], 0, S["tresor"], step="post", color=t["tf"], label="Tresor (wird nie eingesetzt)")
+    ax.step(S["d"], S["tresor"], where="post", color=t["t"], lw=1.4)
+    ax.step(S["d"], S["spiel"], where="post", color=t["a"], lw=1.2, label="Spielgeld")
+    ax.step(S["d"], S["ein"], where="post", color=t["ein"], lw=1.8, ls="--", label="eigene Einzahlungen gesamt")
+    for d in ziele:
+        v = S.loc[S["d"] == d, "tresor"].iloc[-1]
+        ax.scatter([d], [v], color=t["t"], s=26, zorder=3)
+    ax.set_ylabel("USDT"); ax.grid(color=t["grid"], lw=0.6); ax.set_ylim(0, max(S["tresor"].max(), S["spiel"].max()) * 1.12)
+    tz = f"{S['tresor'].iloc[-1]:,.0f}".replace(",", ".")
+    ax.set_title(f"B + Polster ab 30 USDT: Ziel 400 {len(ziele)}× erreicht, Tresor {tz} USDT, eingezahlt {S['ein'].iloc[-1]:.0f} USDT",
                  color=t["fg"], loc="left", fontsize=11.5)
-    fig.tight_layout()
+    ax.legend(frameon=False, labelcolor=t["fg"], loc="upper left"); fig.tight_layout()
     fig.savefig(os.path.join(HERE, f"serie_{name}.png"), facecolor=t["bg"]); plt.close(fig)
 
     fig, ax = frame(t, 3.8)
@@ -74,4 +84,4 @@ for name, t in themes.items():
     ax.set_ylim(0, 85); ax.set_ylabel("Trefferquote in %"); ax.grid(axis="y", color=t["grid"], lw=0.6)
     ax.set_title("Trefferquote je Jahr, in Klammern Anzahl Trades (TP +7,5 % vor Liquidation, x10)", color=t["fg"], loc="left", fontsize=12)
     fig.tight_layout(); fig.savefig(os.path.join(HERE, f"jahre_{name}.png"), facecolor=t["bg"]); plt.close(fig)
-print("ok", len(auszahl), round(ant["konto"].iloc[-1]))
+print("ok", len(ziele), round(S["tresor"].iloc[-1]), round(S["ein"].iloc[-1]), round(ant["konto"].iloc[-1]))

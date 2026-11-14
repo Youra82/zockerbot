@@ -15,7 +15,7 @@ Alle Skripte werden in diesem Ordner gestartet. Kerzen liegen nicht im Repo:
 | `multi.py` | mehrere Regeln gleichzeitig (Auswahl Gruppe A 2021–23) gegen die Einzelregel |
 | `levtp.py` | Hebel/TP-Varianten der Regel als Konto (Serie mit Tresor, Anteil) |
 | `tsl_test.py` | Bitget-Trailing-Stop statt festem TP auf 1m-Kerzen (8 Coins, Ordner per `ZB_KERZEN_1M`) |
-| `ausbruch_stark_trades.csv` | Trade-Folge des Bots (eine Position gleichzeitig, x10, TP 7,5 %), Grundlage der README-Grafiken |
+| `ausbruch_stark_trades.csv` | Trade-Folge des Bots (226 Trades, eine Position gleichzeitig, x10, TP 7,5 %), Grundlage der README-Grafiken und Tabellen |
 
 **v2 – „Rücksetzer im Ausbruch“ (abgelöst)**: `labels.py`, `features.py`, `search.py`, `analyse.py`, `holdout.py`, `winner.py`,
 `winner_trades.csv`, `holdout_result.csv`, `search_top200.csv` – Suche über 39.773 Kombinationen auf 8 + 3 Coins.
