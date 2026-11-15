@@ -197,6 +197,8 @@ Speicherbedarf unter 200 MB; je 15 Minuten werden nur die Coins mit aktiver Tage
 
 | Schlüssel | Standard | Bedeutung |
 |---|---|---|
+| `echtgeld.aktiv` | true | `true` = echte Orders auf Bitget, `false` = **Papierhandel** (siehe unten) |
+| `echtgeld.papier_startkapital` | 200 | Startkapital des Papierkontos |
 | `coins` | 42 Coins | gehandelte USDT-Perpetuals (Bitget-Namen, z. B. `PEPE`, `SHIB`) |
 | `modus` | `serie` | `serie` = all-in mit Tresor, `anteil` = fester Anteil |
 | `leverage` | 10 | Hebel (isolierte Margin) |
@@ -212,6 +214,20 @@ Speicherbedarf unter 200 MB; je 15 Minuten werden nur die Coins mit aktiver Tage
 | `margin_fraction` | 0.20 | Anteil des Kontos je Trade im Modus `anteil` |
 | `min_margin_usdt` | 5.0 | darunter kein Trade |
 | `strategy` | 14 / 40 / 75 / 25 / 30 / 70 | RSI-Länge, Donchian-Tage, Tages-RSI Long/Short, 15m-RSI Long/Short |
+
+### 📝 Papierhandel
+
+In `settings.json` `"echtgeld": {"aktiv": false}` setzen → der Bot handelt dieselbe Regel nur auf Papier:
+echte Bitget-Kurse (öffentlich, **kein Schlüssel nötig**), Einstieg/Ausstieg zum letzten Kurs ± 0,05 % Spread,
+0,06 % Gebühr je Seite, TP und Liquidation werden mit 1m-Kerzen abgerechnet (`papier.py`).
+
+- Eigene Daten in `data_papier/` (Konto `konto.json`, Zustand mit Tresor/Serie, `trades.csv`) – Echtgeld bleibt in `data/`.
+- Der Schalter wird **vor jedem 15m-Takt neu gelesen**: umschalten ohne Neustart, Telegram meldet den Wechsel,
+  Papier-Meldungen beginnen mit „📝 PAPIER“.
+- Beim Wechsel auf Papier laufen offene Echtgeld-Positionen mit ihrem TP auf Bitget weiter.
+- Das **Cockpit** liest denselben Schalter und zeigt automatisch Papierkonto oder Bitget-Konto.
+- `update.sh` behält deine `settings.json` und ergänzt nur neue Einträge.
+- Offline-Prüfung des Papierkontos: `python3 tests_papier.py`
 
 ---
 

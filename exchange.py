@@ -155,3 +155,71 @@ class Exchange:
             except ccxt.ExchangeError as e:
                 if not any(x in str(e) for x in ("Order not found", "no order to cancel", "22001")):
                     logger.error(f"Stornieren {symbol} (stop={stop}): {e}")
+
+
+class PapierExchange(Exchange):
+    """Gleiche Schnittstelle wie Exchange, aber Buchung im Papierkonto (papier.py) mit echten Bitget-Kursen.
+    Kerzen/Kurse öffentlich; es wird nie eine Order an Bitget geschickt (kein Schlüssel)."""
+    papier = True
+
+    def __init__(self, konto_pfad: str, start: float):
+        super().__init__({})
+        from papier import PapierKonto
+        self.konto = PapierKonto(konto_pfad, start, self.exchange)
+        self._lev = {}
+
+    def _side(self, buy: bool) -> str:
+        return "long" if buy else "short"
+
+    def fetch_equity(self) -> tuple[float, float]:
+        self.konto.abrechnen()
+        kurse = {}
+        for p in self.konto.positionen:
+            try:
+                kurse[p["symbol"]] = self.konto.kurs(p["symbol"])
+            except Exception:
+                pass
+        return self.konto.kontostand(kurse), self.konto.s["cash"]
+
+    def _ccxt_pos(self, p):
+        return {"symbol": p["symbol"], "side": p["side"], "contracts": p["qty"], "entryPrice": p["entry"],
+                "initialMargin": p["margin"], "leverage": p["lev"], "liquidationPrice": p["liq"]}
+
+    def fetch_all_open_positions(self) -> dict:
+        self.konto.abrechnen()
+        return {p["symbol"].split("/")[0]: self._ccxt_pos(p) for p in self.konto.positionen}
+
+    def fetch_open_positions(self, symbol: str) -> list:
+        self.konto.abrechnen()
+        return [self._ccxt_pos(p) for p in self.konto.positionen if p["symbol"] == symbol]
+
+    def fetch_open_trigger_orders(self, symbol: str) -> list:
+        return [{"id": "papier-tp", "triggerPrice": p["tp"]} for p in self.konto.positionen
+                if p["symbol"] == symbol and p.get("tp")]
+
+    def set_isolated(self, symbol: str):
+        pass
+
+    def set_leverage(self, symbol: str, leverage: int):
+        self._lev[symbol] = int(leverage)
+
+    def market_order(self, symbol: str, side: str, amount: float, reduce: bool = False) -> dict:
+        kurs = self.konto.kurs(symbol)
+        amt = float(self.exchange.amount_to_precision(symbol, amount))
+        if reduce:                                      # Schließen: Gegenseite der Order
+            p = self.konto.position(symbol, self._side(side == "sell"))
+            if p:
+                self.konto.schliessen(p, kurs, "Market")
+            return {"average": kurs, "filled": amt}
+        p = self.konto.eroeffnen(symbol, self._side(side == "buy"), amt, kurs, self._lev.get(symbol, 1))
+        logger.info(f"PAPIER Market {side.upper()} {amt} {symbol} @ {p['entry']:.6g}")
+        return {"average": p["entry"], "filled": amt}
+
+    def take_profit(self, symbol: str, close_side: str, amount: float, trigger: float) -> dict:
+        side = self._side(close_side == "sell")
+        self.konto.setze(symbol, side, tp=float(self.exchange.price_to_precision(symbol, trigger)))
+        logger.info(f"PAPIER TP {close_side.upper()} {symbol} @ {trigger:.6g}")
+        return {"id": "papier-tp"}
+
+    def cancel_all(self, symbol: str):
+        pass

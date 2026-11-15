@@ -24,6 +24,10 @@ Aufruf:
   python3 live.py --check       nur anzeigen: Konto, Tresor, Positionen, Tagesbedingungen, Signale (keine Orders)
   python3 live.py --once        genau einen Durchlauf ausführen (mit Orders)
   python3 live.py --tresor 250  Tresor von Hand auf 250 USDT setzen
+
+Papierhandel: settings.json "echtgeld": {"aktiv": false} -> keine echten Orders, Buchung im Papierkonto mit echten
+  Bitget-Kursen (papier.py, Startkapital "papier_startkapital"). Papier und Echtgeld haben getrennte Daten
+  (data_papier/ bzw. data/). Der Bot liest den Schalter vor jedem 15m-Takt neu – Umschalten ohne Neustart.
 """
 import argparse
 import csv
@@ -39,13 +43,37 @@ import pandas as pd
 import requests
 
 import strategy
-from exchange import Exchange
+from exchange import Exchange, PapierExchange
+from papier import echtgeld_aktiv, startkapital
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(ROOT, "data")
 LOGS = os.path.join(ROOT, "logs")
 STATE = os.path.join(DATA, "state.json")
 TRADES = os.path.join(DATA, "trades.csv")
+PAPIER_DATA = os.path.join(ROOT, "data_papier")
+
+
+def set_modus(papier: bool):
+    """Papier und Echtgeld nie im selben Datenverzeichnis (Zustand, Tresor, Trades getrennt)."""
+    global DATA, STATE, TRADES
+    DATA = PAPIER_DATA if papier else os.path.join(ROOT, "data")
+    STATE = os.path.join(DATA, "state.json")
+    TRADES = os.path.join(DATA, "trades.csv")
+
+
+def make_exchange(cfg, acc):
+    papier = not echtgeld_aktiv(cfg)
+    set_modus(papier)
+    if papier:
+        return PapierExchange(os.path.join(PAPIER_DATA, "konto.json"), startkapital(cfg, 200.0))
+    if not acc or not acc.get("apiKey"):
+        sys.exit("FEHLER: Echtgeld aktiv, aber secret.json enthält keinen Eintrag 'zockerbot' mit apiKey/secret/password.")
+    return Exchange(acc)
+
+
+def modus_name(ex) -> str:
+    return "PAPIER" if getattr(ex, "papier", False) else "ECHTGELD"
 log = logging.getLogger("zockerbot")
 DAY_CACHE = {"datum": None, "flags": {}}
 
@@ -80,6 +108,16 @@ def load_settings():
     return cfg
 
 
+def load_settings_soft():
+    """Wie load_settings, aber Fehler als Ausnahme statt Programmende (Dauerbetrieb liest jeden Takt neu)."""
+    with open(os.path.join(ROOT, "settings.json"), encoding="utf-8") as f:
+        cfg = json.load(f)
+    for k in ("coins", "modus", "leverage", "tp_pct", "max_positionen"):
+        if k not in cfg:
+            raise ValueError(f"Eintrag '{k}' fehlt")
+    return cfg
+
+
 def load_secret(required=True):
     path = os.path.join(ROOT, "secret.json")
     if not os.path.exists(path):
@@ -95,9 +133,14 @@ def load_secret(required=True):
     return acc or {}, s.get("telegram", {})
 
 
+PAPIER_MARKE = {"an": False}
+
+
 def telegram(tg: dict, text: str):
     if not tg.get("bot_token") or not tg.get("chat_id"):
         return
+    if PAPIER_MARKE["an"]:
+        text = "📝 PAPIER · " + text
     try:
         requests.post(f"https://api.telegram.org/bot{tg['bot_token']}/sendMessage",
                       data={"chat_id": tg["chat_id"], "text": text}, timeout=10)
@@ -309,19 +352,19 @@ def tresor_verwalten(cfg, st, tg, equity):
 
 def cycle(ex, cfg, tg, dry=False):
     st = load_state()
-    keys = bool(ex.exchange.apiKey)
+    keys = getattr(ex, "papier", False) or bool(ex.exchange.apiKey)
     params = cfg.get("strategy", {})
     equity, free = ex.fetch_equity() if keys else (0.0, 0.0)
     pos = ex.fetch_all_open_positions() if keys else {}
     mine = {c: p for c, p in pos.items() if c in cfg["coins"]}
 
     if dry:
-        print(f"  Modus {cfg['modus']} | Konto {equity:.2f} USDT, frei {free:.2f} | Tresor {st['tresor']:.2f} | "
+        print(f"  {modus_name(ex)} | Modus {cfg['modus']} | Konto {equity:.2f} USDT, frei {free:.2f} | Tresor {st['tresor']:.2f} | "
               f"Spielgeld {equity - st['tresor']:.2f} | Serie {st['serie']} (beste {st['beste_serie']}) | Ziele erreicht {st['ziele']}")
         for c, p in mine.items():
             print(f"  offen: {c} {p.get('side')} {p.get('contracts')} @ {p.get('entryPrice')}")
     else:
-        log.info(f"Durchlauf: Konto {equity:.2f} USDT, frei {free:.2f}, offen {list(mine)}, Serie {st['serie']}")
+        log.info(f"Durchlauf ({modus_name(ex)}): Konto {equity:.2f} USDT, frei {free:.2f}, offen {list(mine)}, Serie {st['serie']}")
         # 1. offene Positionen und geschlossene Trades
         for coin in list(st["open"]):
             try:
@@ -381,6 +424,7 @@ def main():
     a = ap.parse_args()
     setup_logging()
     cfg = load_settings()
+    set_modus(not echtgeld_aktiv(cfg))                         # --tresor wirkt auf das Konto des aktuellen Modus
     if a.tresor is not None:
         if a.tresor < 0:
             sys.exit("FEHLER: --tresor braucht einen Betrag >= 0.")
@@ -391,17 +435,19 @@ def main():
         print(f"Tresor auf {a.tresor:.2f} USDT gesetzt (eigene Reserve). Polster-Grenze jetzt "
               f"{a.tresor + cfg.get('polster_usdt', 0.0):.0f} USDT. Der laufende Bot nutzt die Werte ab dem nächsten 15m-Takt.")
         return
-    acc, tg = load_secret(required=not a.check)
-    ex = Exchange(acc)
+    papier = not echtgeld_aktiv(cfg)
+    acc, tg = load_secret(required=not (a.check or papier))
+    ex = Exchange(acc) if a.check and not papier else make_exchange(cfg, acc)
+    PAPIER_MARKE["an"] = papier
     if a.check:
-        print(f"zockerbot --check  ({len(cfg['coins'])} Coins, x{cfg['leverage']}, TP {cfg['tp_pct'] * 100:.1f} %, "
+        print(f"zockerbot --check  {modus_name(ex)}  ({len(cfg['coins'])} Coins, x{cfg['leverage']}, TP {cfg['tp_pct'] * 100:.1f} %, "
               f"max. {cfg['max_positionen']} Position(en), Modus {cfg['modus']})")
         cycle(ex, cfg, tg, dry=True)
         return
     if a.once:
         cycle(ex, cfg, tg)
         return
-    telegram(tg, f"zockerbot gestartet: {len(cfg['coins'])} Coins, x{cfg['leverage']}, TP {cfg['tp_pct'] * 100:.1f} %, "
+    telegram(tg, f"zockerbot gestartet ({modus_name(ex)}): {len(cfg['coins'])} Coins, x{cfg['leverage']}, TP {cfg['tp_pct'] * 100:.1f} %, "
                  f"max. {cfg['max_positionen']} Position(en), Modus {cfg['modus']}"
                  + (f", Ziel {cfg.get('ziel_usdt')} USDT, danach {cfg.get('im_spiel_nach_ziel', 0.2) * 100:.0f} % im Spiel, "
                     f"Rest in den Tresor" if cfg["modus"] == "serie" else f", {cfg['margin_fraction'] * 100:.0f} % je Trade"))
@@ -411,6 +457,22 @@ def main():
         nxt = (now // 900 + 1) * 900 + delay
         time.sleep(max(1, nxt - now))
         try:
+            try:
+                neu = load_settings_soft()
+            except Exception as e:
+                log.error(f"settings.json nicht lesbar ({e}) – nutze die bisherigen Einstellungen")
+                neu = cfg
+            if echtgeld_aktiv(neu) != echtgeld_aktiv(cfg):      # Schalter umgelegt: anderes Konto, eigene Daten
+                if echtgeld_aktiv(neu):
+                    acc, tg = load_secret(required=True)
+                ex = make_exchange(neu, acc)
+                PAPIER_MARKE["an"] = not echtgeld_aktiv(neu)
+                msg = (f"zockerbot umgeschaltet auf {modus_name(ex)}. "
+                       + ("Ab jetzt echte Orders auf Bitget." if echtgeld_aktiv(neu) else
+                          "Ab jetzt nur Papierhandel; laufende Echtgeld-Positionen behalten ihren TP auf Bitget."))
+                log.info(msg)
+                telegram(tg, msg)
+            cfg = neu
             cycle(ex, cfg, tg)
         except Exception as e:
             log.error(f"Durchlauf abgebrochen: {type(e).__name__}: {e}", exc_info=True)

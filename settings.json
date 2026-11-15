@@ -1,4 +1,9 @@
 {
+    "echtgeld": {
+        "aktiv": true,
+        "papier_startkapital": 200,
+        "_info": "true = echte Orders auf Bitget (secret.json). false = Papierhandel mit echten Bitget-Kursen, ohne Schlüssel; eigenes Datenverzeichnis data_papier/ (Startkapital papier_startkapital). Wird vor jedem 15m-Takt neu gelesen – Umschalten ohne Neustart; das Cockpit zeigt automatisch das passende Konto."
+    },
     "coins": ["PEPE", "SHIB", "AAVE", "ADA", "APT", "ARB", "ATOM", "AVAX", "AXS", "BCH", "BNB", "BTC", "CRV", "DOGE",
               "DOT", "ENA", "ETC", "ETH", "FIL", "GALA", "HBAR", "ICP", "IMX", "INJ", "LDO", "LINK", "LTC", "MANA",
               "NEAR", "OP", "RUNE", "SAND", "SEI", "SOL", "STX", "SUI", "TIA", "TRX", "UNI", "WLD", "XLM", "XRP"],
